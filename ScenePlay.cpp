@@ -287,6 +287,7 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     }
 
     uint32_t start_ticks = SDL_GetTicks() + 2000;
+    startTicks = start_ticks; // ★修正(CRITICAL-1): メンバ変数にコピー → processInput で参照
     uint32_t lastFpsTime = SDL_GetTicks();
     int frameCount = 0, fps = 0;
     bool playing = true;
@@ -443,6 +444,14 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
             int btn = ev.jbutton.button;
             int lane = getLaneFromJoystickButton(btn);
 
+            // ★修正(CRITICAL-1): ループ先頭の cur_ms ではなく
+            //   ev.jbutton.timestamp（物理打鍵時刻）から cur_ms を再計算する。
+            //   これにより最大16.67ms(60Hzの1フレーム)あったジッターを解消する。
+            //   start_ticks はメンバ変数として保持する。
+            double hit_ms = (startTicks > 0)
+                ? (double)((int64_t)ev.jbutton.timestamp - (int64_t)startTicks)
+                : cur_ms;
+
             if (lane != -1) lanePressed[lane] = isDown;
 
             if (btn == Config::BTN_EXIT) {
@@ -485,7 +494,7 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
             if (lane != -1 && !isAutoLane(lane)) {
                 if (isDown) {
                     if (!engine.getStatus().isFailed && cur_ms >= -500.0) {
-                        int resultJudge = engine.processHit(lane, cur_ms, now, snd);
+                        int resultJudge = engine.processHit(lane, hit_ms, now, snd);
 
                         // LN押下時の判定を保存 (押下中ボム演出で参照)
                         lnHitJudge[lane] = resultJudge;
@@ -509,7 +518,7 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
                     }
                 } else {
                     if (!engine.getStatus().isFailed && cur_ms >= -500.0) {
-                        engine.processRelease(lane, cur_ms, now);
+                        engine.processRelease(lane, hit_ms, now);
                         lnHitJudge[lane] = 0;  // 離したらクリア
                     }
                 }

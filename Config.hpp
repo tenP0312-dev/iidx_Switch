@@ -42,7 +42,8 @@ namespace Config {
     inline int DAN_GAUGE_START_PERCENT = 100;
 
     // --- 【追加】判定設定 ---
-    inline int JUDGE_OFFSET = 0; // 判定オフセット(ms) 正の値で判定が遅くなる（ノーツが下がる）
+    inline int JUDGE_OFFSET = 0;  // 判定オフセット(ms): 正の値で判定が遅くなる
+    inline int VISUAL_OFFSET = 0; // 表示オフセット(px): ノーツの見た目位置だけをずらす。JUDGE_OFFSETと独立。
     inline bool SHOW_FAST_SLOW = true; // 【追加】FAST/SLOW表示切り替えフラグ
 
     // --- ボム演出設定 ---
@@ -135,6 +136,7 @@ namespace Config {
                 else if (key == "GAUGE_DISPLAY_TYPE") GAUGE_DISPLAY_TYPE = std::stoi(val);
                 else if (key == "DAN_GAUGE_START_PERCENT") DAN_GAUGE_START_PERCENT = std::stoi(val); 
                 else if (key == "JUDGE_OFFSET") JUDGE_OFFSET = std::stoi(val);
+                else if (key == "VISUAL_OFFSET") VISUAL_OFFSET = std::stoi(val);
                 else if (key == "SHOW_FAST_SLOW") SHOW_FAST_SLOW = (std::stoi(val) != 0); 
                 else if (key == "BOMB_DURATION_MS") BOMB_DURATION_MS = std::stoi(val);
                 else if (key == "BOMB_SIZE_FACTOR") BOMB_SIZE_FACTOR = std::stoi(val);
@@ -202,6 +204,7 @@ namespace Config {
         file << "GAUGE_DISPLAY_TYPE=" << GAUGE_DISPLAY_TYPE << "\n";
         file << "DAN_GAUGE_START_PERCENT=" << DAN_GAUGE_START_PERCENT << "\n"; 
         file << "JUDGE_OFFSET=" << JUDGE_OFFSET << "\n";
+        file << "VISUAL_OFFSET=" << VISUAL_OFFSET << "\n";
         file << "SHOW_FAST_SLOW=" << (SHOW_FAST_SLOW ? 1 : 0) << "\n";
         file << "BOMB_DURATION_MS=" << BOMB_DURATION_MS << "\n";
         file << "BOMB_SIZE_FACTOR=" << BOMB_SIZE_FACTOR << "\n";
@@ -242,6 +245,7 @@ namespace Config {
     }
 }
 #endif
+
 
 
 

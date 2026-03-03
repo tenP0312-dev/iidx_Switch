@@ -59,6 +59,7 @@ private:
     bool scratchDownActive = false;
 
     uint32_t lastStartPressTime = 0;
+    uint32_t startTicks = 0; // ★修正(CRITICAL-1): 曲開始時刻。ev.timestamp から cur_ms を計算するために保持。
     uint32_t lastLNBombTime[9] = {};  // LN押下中ボム: レーンごとの最終発火時刻
     int      lnHitJudge[9]     = {};  // LN押下時の判定結果 (0=なし,2=GREAT,3=PGREAT)
     int backupSudden = 300; 
@@ -68,6 +69,7 @@ private:
 };
 
 #endif
+
 
 
 

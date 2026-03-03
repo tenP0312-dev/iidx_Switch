@@ -415,8 +415,10 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
 
     // headY: Y座標の差 × 定数（BPMに一切依存しない）
     // cur_y がBPM連動で進むことでソフランが表現される
-    int headY = judgeY - (int)((note.y - cur_y) * pixels_per_y) - (int)Config::JUDGE_OFFSET;
-    if (note.isLN && note.isBeingPressed) headY = judgeY - (int)Config::JUDGE_OFFSET;
+    // ★修正(CRITICAL-3): ノーツ描画位置には VISUAL_OFFSET を使う。
+    //        JUDGE_OFFSET は判定タイミングのみに影響し、見た目位置とは独立。
+    int headY = judgeY - (int)((note.y - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
+    if (note.isLN && note.isBeingPressed) headY = judgeY - Config::VISUAL_OFFSET;
 
     const TextureRegion *target = nullptr, *lnB = nullptr, *lnA1 = nullptr, *lnA2 = nullptr, *lnS = nullptr, *lnE = nullptr;
     if (note.lane == 8) {
@@ -436,7 +438,7 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     if (note.isLN) {
         // tailY: LN終点のY座標 = note.y + note.l（Yの長さ）
         // 同じ pixels_per_y で計算するのでBPMに依存しない
-        int tailY = judgeY - (int)((note.y + note.l - cur_y) * pixels_per_y) - (int)Config::JUDGE_OFFSET;
+        int tailY = judgeY - (int)((note.y + note.l - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
 
         bool shouldDraw = note.isBeingPressed
             || !(tailY > judgeY || headY < (int)Config::SUDDEN_PLUS - 5000);
@@ -488,7 +490,8 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
 
 void NoteRenderer::renderBeatLine(SDL_Renderer* ren, double diff_y, double pixels_per_y) {
     int judgeY = Config::JUDGMENT_LINE_Y - Config::LIFT;
-    int y      = judgeY - (int)(diff_y * pixels_per_y) - (int)Config::JUDGE_OFFSET;
+    // 小節線も描画オフセットに従う
+    int y      = judgeY - (int)(diff_y * pixels_per_y) - Config::VISUAL_OFFSET;
     if (y < Config::SUDDEN_PLUS || y > judgeY) return;
     SDL_SetRenderDrawColor(ren, 60, 60, 70, 255);
     SDL_RenderDrawLine(ren, ll.baseX, y, ll.baseX + ll.totalWidth, y);
@@ -794,6 +797,7 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
 
 
 
