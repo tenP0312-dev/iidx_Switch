@@ -45,6 +45,11 @@ namespace Config {
     inline int JUDGE_OFFSET = 0; // 判定オフセット(ms) 正の値で判定が遅くなる（ノーツが下がる）
     inline bool SHOW_FAST_SLOW = true; // 【追加】FAST/SLOW表示切り替えフラグ
 
+    // --- ボム演出設定 ---
+    inline int BOMB_DURATION_MS = 300; // ボム1発の表示時間(ms) 50〜1000
+    inline int BOMB_SIZE_FACTOR = 420; // ボムサイズ係数 (LANE_WIDTH * BOMB_SIZE_FACTOR / 100) * 3
+                                       // デフォルト420 = LANE_WIDTH*1.4*3 と同等
+
     // --- 【追加】システム設定 ---
     inline int START_UP_OPTION = 1; // 0: Title, 1: Select (デフォルト選曲画面)
     inline std::string SORT_NAME = "DEFAULT"; // 【追加】現在のソート名を表示するための変数
@@ -131,6 +136,8 @@ namespace Config {
                 else if (key == "DAN_GAUGE_START_PERCENT") DAN_GAUGE_START_PERCENT = std::stoi(val); 
                 else if (key == "JUDGE_OFFSET") JUDGE_OFFSET = std::stoi(val);
                 else if (key == "SHOW_FAST_SLOW") SHOW_FAST_SLOW = (std::stoi(val) != 0); 
+                else if (key == "BOMB_DURATION_MS") BOMB_DURATION_MS = std::stoi(val);
+                else if (key == "BOMB_SIZE_FACTOR") BOMB_SIZE_FACTOR = std::stoi(val);
                 else if (key == "START_UP_OPTION") START_UP_OPTION = std::stoi(val);
                 else if (key == "FOLDER_NOTES_MIN") FOLDER_NOTES_MIN = std::stoi(val);
                 else if (key == "FOLDER_NOTES_MAX") FOLDER_NOTES_MAX = std::stoi(val);
@@ -196,6 +203,8 @@ namespace Config {
         file << "DAN_GAUGE_START_PERCENT=" << DAN_GAUGE_START_PERCENT << "\n"; 
         file << "JUDGE_OFFSET=" << JUDGE_OFFSET << "\n";
         file << "SHOW_FAST_SLOW=" << (SHOW_FAST_SLOW ? 1 : 0) << "\n";
+        file << "BOMB_DURATION_MS=" << BOMB_DURATION_MS << "\n";
+        file << "BOMB_SIZE_FACTOR=" << BOMB_SIZE_FACTOR << "\n";
         file << "START_UP_OPTION=" << START_UP_OPTION << "\n";
         file << "FOLDER_NOTES_MIN=" << FOLDER_NOTES_MIN << "\n";
         file << "FOLDER_NOTES_MAX=" << FOLDER_NOTES_MAX << "\n";
@@ -233,6 +242,7 @@ namespace Config {
     }
 }
 #endif
+
 
 
 

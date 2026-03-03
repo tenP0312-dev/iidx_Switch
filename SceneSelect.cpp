@@ -276,8 +276,10 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
     const uint32_t REPEAT_INTERVAL = 100;
     static uint32_t lastDetailRepeatTime = 0;
 
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
+    // ★修正: std::random_device は Switch 上でエントロピーソースがなく
+    //        毎回同じシードになる。SDL_GetPerformanceCounter() で代替する。
+    //        static にしないことでフォルダ移動ごとにシードが変わり再現性がなくなる。
+    std::mt19937 gen(static_cast<uint32_t>(SDL_GetPerformanceCounter()));
 
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -608,6 +610,7 @@ bool SceneSelect::isOneMoreFolderSelected() const {
 
 void SceneSelect::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& renderer) {}
 void SceneSelect::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer) {}
+
 
 
 

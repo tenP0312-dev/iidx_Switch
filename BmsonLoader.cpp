@@ -125,6 +125,20 @@ static void parse_bmson_internal(const nlohmann::json& j, BMSData& data, const s
     data.header.total = (double)totalNotesCount; 
     data.header.is7Key = (hasP1_6or7 && !hasP2Side);
 
+    // ★修正: BMSON の "lines" キー（小節線位置）を data.lines に格納する。
+    //        旧実装はこのキーを一切パースしておらず、data.lines が常に空だった。
+    //        PlayEngine::init が data.lines をもとに beatLines を構築しているため、
+    //        パース漏れ = beatLines が空 = 小節線が一切描画されない。
+    if (j.contains("lines") && j["lines"].is_array()) {
+        data.lines.reserve(j["lines"].size());
+        for (auto& l : j["lines"]) {
+            int64_t y = l.value("y", (int64_t)0);
+            data.lines.push_back({y, 0.0});
+        }
+        std::sort(data.lines.begin(), data.lines.end(),
+                  [](const BMSLine& a, const BMSLine& b){ return a.y < b.y; });
+    }
+
     if (j.contains("bga") && j["bga"].is_object()) {
         const auto& bga_node = j["bga"];
         std::map<int, std::string> idToName;
@@ -279,6 +293,8 @@ BMSHeader BmsonLoader::loadHeader(const std::string& path) {
     } catch (...) {}
     return BMSHeader{};
 }
+
+
 
 
 

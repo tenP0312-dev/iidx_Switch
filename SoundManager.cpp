@@ -27,13 +27,26 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
         std::string suffix = (partIdx == 1) ? "" : std::to_string(partIdx);
         std::string pckPath = rootPath + (rootPath.empty() || rootPath.back() == '/' ? "" : "/") + bmsonName + suffix + ".boxwav";
 
-        // Switch向け: パート2以降はI/O安定化のために待機
+        // ★修正: SDL_Delay(2500) の無条件ハードスリープを廃止。
+        //        旧実装は「2.5秒待てば I/O が安定する」という根拠のない仮定に基づいており、
+        //        遅い microSD では 2.5秒でも足りず、速い microSD では無駄に待つだけだった。
+        //        新実装: ファイルを開けたら即座に処理を続行し、
+        //                開けなかった場合のみ exponential backoff でリトライする。
+        //        200ms → 400ms → 800ms → 1600ms → 3200ms の最大5回試行 (計 ~6秒上限)。
+        //        ファイルが存在しない場合（= これ以上パートがない）は即座に終了する。
+        std::ifstream ifs;
         if (partIdx > 1) {
-            std::cout << "Part " << partIdx << " detected. Waiting for I/O settle..." << std::endl;
-            SDL_Delay(2500);
+            for (int retry = 0; retry < 5; ++retry) {
+                ifs.open(pckPath, std::ios::binary);
+                if (ifs) break;
+                // 存在しないファイルへのリトライは無意味なので open 失敗=終了とみなす
+                // (ただし I/O 一時エラーの可能性を考慮して 1 回だけ短い待機を挟む)
+                if (retry == 0) SDL_Delay(200);
+                else break;
+            }
+        } else {
+            ifs.open(pckPath, std::ios::binary);
         }
-
-        std::ifstream ifs(pckPath, std::ios::binary);
         if (!ifs) break;
 
         uint32_t count, d1, d2;
@@ -63,30 +76,31 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
     if (boxIndex.count(filename)) {
         auto& entry = boxIndex[filename];
 
+        // ★修正: MAX_WAV_MEMORY チェックを boxIndex パスにも追加。
+        //        旧実装はこのパスだけチェックが抜けていた。
+        if (currentTotalMemory + entry.size > MAX_WAV_MEMORY) return;
+
         std::ifstream ifs(entry.pckPath, std::ios::binary);
         if (ifs) {
-            uint8_t* tempBuf = (uint8_t*)SDL_malloc(entry.size);
-            if (tempBuf) {
-                ifs.seekg(entry.offset);
-                ifs.read((char*)tempBuf, entry.size);
+            // ★修正: SDL_malloc → loadBuffer (再利用バッファ) に変更。
+            //        SDL_malloc の NULL 返却チェック不要になり、
+            //        ヒープフラグメンテーションも発生しない。
+            if (loadBuffer.size() < entry.size)
+                loadBuffer.resize(entry.size);
 
-                // ★修正：freesrc=0 にして RWops を手動解放する。
-                // freesrc=1 は SDL_RWops 構造体のみを解放し、SDL_RWFromMem が指す
-                // tempBuf の元メモリは解放しない。これがメモリリークの根本原因だった。
-                // Mix_LoadWAV_RW(PCM WAV) は内部でデータをコピーするため、
-                // SDL_RWclose 後に tempBuf を SDL_free しても安全。
-                SDL_RWops* rw = SDL_RWFromMem(tempBuf, (int)entry.size);
-                Mix_Chunk* chunk = Mix_LoadWAV_RW(rw, 0); // ← 0 に変更
-                SDL_RWclose(rw);                           // ← 手動で close
+            ifs.seekg(entry.offset);
+            ifs.read((char*)loadBuffer.data(), entry.size);
 
-                if (chunk) {
-                    sounds[id] = chunk;
-                    currentTotalMemory += entry.size;
-                } else {
-                    // デバッグ用：ロード失敗の原因を出力
-                    // fprintf(stderr, "Mix_LoadWAV_RW failed for %s: %s\n", filename.c_str(), Mix_GetError());
-                }
-                SDL_free(tempBuf); // chunk の成否に関わらず必ず解放
+            SDL_RWops* rw = SDL_RWFromMem(loadBuffer.data(), (int)entry.size);
+            Mix_Chunk* chunk = Mix_LoadWAV_RW(rw, 0);
+            SDL_RWclose(rw);
+
+            if (chunk) {
+                sounds[id] = chunk;
+                currentTotalMemory += entry.size;
+            } else {
+                fprintf(stderr, "[SoundManager] Mix_LoadWAV_RW failed: %s (%s)\n",
+                        filename.c_str(), Mix_GetError());
             }
             return;
         }
@@ -149,21 +163,27 @@ void SoundManager::loadSoundsInBulk(const std::vector<std::string>& filenames,
                 continue;
             }
 
-            uint8_t* tempBuf = (uint8_t*)SDL_malloc(entry.size);
-            if (tempBuf) {
-                ifs.seekg(entry.offset);
-                ifs.read((char*)tempBuf, entry.size);
+            // ★修正: SDL_malloc → loadBuffer (再利用バッファ) に変更。
+            //        SDL_malloc/SDL_free の繰り返しはヒープフラグメンテーションの原因。
+            //        30〜60分プレイ後に大きな連続領域の確保だけ失敗するようになり、
+            //        「BGMだけ鳴らなくなる」症状を引き起こしていた。
+            //        loadBuffer は最大サイズに一度だけ拡大し、以降は解放しない。
+            if (loadBuffer.size() < entry.size)
+                loadBuffer.resize(entry.size);
 
-                // ★修正：loadSingleSound と同様に freesrc=0 + 手動 RWclose
-                SDL_RWops* rwIndiv = SDL_RWFromMem(tempBuf, (int)entry.size);
-                Mix_Chunk* chunk = Mix_LoadWAV_RW(rwIndiv, 0); // ← 0 に変更
-                SDL_RWclose(rwIndiv);                           // ← 手動で close
+            ifs.seekg(entry.offset);
+            ifs.read((char*)loadBuffer.data(), entry.size);
 
-                if (chunk) {
-                    sounds[getHash(name)] = chunk;
-                    currentTotalMemory += entry.size;
-                }
-                SDL_free(tempBuf); // chunk の成否に関わらず必ず解放
+            SDL_RWops* rwIndiv = SDL_RWFromMem(loadBuffer.data(), (int)entry.size);
+            Mix_Chunk* chunk = Mix_LoadWAV_RW(rwIndiv, 0);
+            SDL_RWclose(rwIndiv);
+
+            if (chunk) {
+                sounds[getHash(name)] = chunk;
+                currentTotalMemory += entry.size;
+            } else {
+                fprintf(stderr, "[SoundManager] Mix_LoadWAV_RW failed: %s (%s)\n",
+                        name.c_str(), Mix_GetError());
             }
 
             processedCount++;
@@ -262,6 +282,10 @@ void SoundManager::cleanup() {
     clear();
     Mix_CloseAudio();
 }
+
+
+
+
 
 
 

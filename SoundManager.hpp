@@ -68,10 +68,21 @@ private:
     Mix_Chunk* currentPreviewChunk = nullptr;
 
     uint64_t currentTotalMemory = 0;
-    const uint64_t MAX_WAV_MEMORY = 512 * 1024 * 1024; 
+    const uint64_t MAX_WAV_MEMORY = 512 * 1024 * 1024;
+
+    // ★修正: SDL_malloc/SDL_free の繰り返しによるヒープフラグメンテーション対策。
+    // 毎回 SDL_malloc(可変サイズ) + SDL_free を繰り返すと、Switch の libc malloc では
+    // 30〜60分でヒープが断片化し、大きな連続領域の確保に失敗するようになる。
+    // BGM ファイルはキー音より大きいため、SDL_malloc が NULL を返してサイレントにスキップされ
+    // 「BGM だけ鳴らなくなる」症状として顕在化する。
+    // vector は resize() で最大サイズに一度だけ拡大し、以降は同じメモリを使い回す。
+    // アロケーション回数を「起動から終了まで数回」に激減させ、フラグメンテーションを根絶する。
+    std::vector<uint8_t> loadBuffer;
 };
 
 #endif
+
+
 
 
 

@@ -11,6 +11,13 @@
 #include "BmsonLoader.hpp"
 #include "CommonTypes.hpp"
 
+// ボムアニメーション管理用 (ScenePlayとNoteRenderer間で共有)
+struct BombAnim {
+    int      lane;
+    uint32_t startTime;
+    int      judgeType; // 0:なし, 1:P-GREAT, 2:GREAT
+};
+
 /**
  * @brief テクスチャとサイズ情報をペアで管理し、SDL_QueryTextureを不要にする
  */
@@ -96,6 +103,14 @@ public:
                         float progress, SDL_Color color, int combo = 0);
 
     void renderCombo(SDL_Renderer* ren, int combo);
+    void renderEffects(SDL_Renderer* ren,
+                       ActiveEffect* buf, size_t& count,
+                       const bool* lanePressed, uint32_t now);
+    void renderBombs(SDL_Renderer* ren,
+                     BombAnim* buf, size_t& count,
+                     uint32_t now);
+    void renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress);
+
     void renderGauge(SDL_Renderer* ren, double gaugeValue,
                      int gaugeOption, bool isFailed);
     void renderUI(SDL_Renderer* ren, const BMSHeader& header,
@@ -143,7 +158,8 @@ private:
     TextureRegion texLaneCover;
     TextureRegion texGaugeAssist, texGaugeNormal, texGaugeHard,
                   texGaugeExHard, texGaugeHazard, texGaugeDan;
-    TextureRegion texGaugeFrame; // ★修正: init()でロード済み。renderGauge()内で毎フレーム string生成+map探索を行っていた問題を修正。
+    TextureRegion texGaugeFrame;  // ★修正: init()でロード済み。renderGauge()内で毎フレーム string生成+map探索を行っていた問題を修正。
+    TextureRegion texNameplate;   // ★修正: renderUI()内で毎フレーム string生成+map探索していた問題を修正。init()でロード済み。
     TextureRegion texKeys, tex_scratch, tex_scratch_center;
 
     void loadAndCache(SDL_Renderer* ren, TextureRegion& region, const std::string& path);
@@ -161,6 +177,10 @@ private:
 };
 
 #endif // NOTERENDERER_HPP
+
+
+
+
 
 
 

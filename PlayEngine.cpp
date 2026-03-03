@@ -34,8 +34,11 @@ void PlayEngine::init(BMSData& data) {
     int laneMap[9];
     for (int i = 0; i <= 8; i++) laneMap[i] = i;
 
-    std::random_device rd;
-    std::mt19937 g(rd());
+    // ★修正: std::random_device は Switch 等の組み込み環境では
+    //        エントロピーソースがなく毎回同じ値を返すことがある。
+    //        SDL_GetPerformanceCounter() はナノ秒精度のカウンタなので
+    //        再プレイのたびに異なるシードになり、毎回違う配置になる。
+    std::mt19937 g(static_cast<uint32_t>(SDL_GetPerformanceCounter()));
 
     if (Config::PLAY_OPTION == 1) { // RANDOM
         std::vector<int> kbd = {1, 2, 3, 4, 5, 6, 7};
@@ -73,7 +76,15 @@ void PlayEngine::init(BMSData& data) {
         return a.originalLane < b.originalLane;
     });
 
-    std::map<int64_t, std::set<int>> usedLanesAtY;
+    // ★修正: std::map<int64_t, std::set<int>> を廃止。
+    //        旧実装は S-RANDOM 時に全ノーツ分の map ノード + set ノードを動的確保していた。
+    //        2000ノーツで数千回の new/delete が発生し、init 時間が数百ms 増加していた。
+    //        7鍵盤は bit0-bit7 で表現できる (lane 1-7 を bit 1-7 に対応)。
+    //        unordered_map<y, uint8_t> なら: メモリ = 1バイト/Y値 (set の 1/40 以下)。
+    //        ビットマスクのチェックは O(1)、キャッシュライン効率も圧倒的に改善。
+    std::unordered_map<int64_t, uint8_t> usedLanesMask;
+    if (Config::PLAY_OPTION == 3) // S-RANDOM 時のみ使用するので事前確保
+        usedLanesMask.reserve(tempNotes.size());
 
     for (const auto& tn : tempNotes) {
         PlayableNote pn;
@@ -109,14 +120,15 @@ void PlayEngine::init(BMSData& data) {
                     std::vector<int> candidates = {1, 2, 3, 4, 5, 6, 7};
                     std::shuffle(candidates.begin(), candidates.end(), g);
                     int selected = candidates[0];
+                    uint8_t& mask = usedLanesMask[tn.y]; // operator[] は初回ゼロ初期化
                     for (int c : candidates) {
-                        if (usedLanesAtY[tn.y].find(c) == usedLanesAtY[tn.y].end()) {
+                        if (!(mask & (1u << c))) { // ビットが立っていなければ未使用
                             selected = c;
                             break;
                         }
                     }
                     pn.lane = selected;
-                    usedLanesAtY[tn.y].insert(selected);
+                    mask |= (1u << selected); // 使用済みにマーク
                 } else {
                     pn.lane = laneMap[tn.originalLane];
                 }
@@ -253,7 +265,7 @@ void PlayEngine::update(double cur_ms, uint32_t now, SoundManager& snd) {
     }
 }
 
-int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, SoundManager& snd) {
+int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, SoundManager& snd, bool isAuto) {
     if (status.isFailed || lane < 1 || lane > 8) return 0;
 
     bool hitSuccess = false;
@@ -303,20 +315,27 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, SoundManager& 
         bool isSlow    = (raw_diff > 0);
 
         if (diff <= Config::JUDGE_PGREAT) {
-            status.pGreatCount++; status.combo++; judgeType = 3;
-            status.exScore += 2;
+            judgeType = 3;
             isFast = false; isSlow = false;
+            if (!isAuto) { status.pGreatCount++; status.combo++; status.exScore += 2; }
         } else if (diff <= Config::JUDGE_GREAT) {
-            status.greatCount++; status.combo++; judgeType = 2;
-            status.exScore += 1;
-            if (isFast) status.fastCount++; else status.slowCount++;
+            judgeType = 2;
+            if (!isAuto) {
+                status.greatCount++; status.combo++; status.exScore += 1;
+                if (isFast) status.fastCount++; else status.slowCount++;
+            }
         } else if (diff <= Config::JUDGE_GOOD) {
-            status.goodCount++; status.combo++; judgeType = 1;
-            if (isFast) status.fastCount++; else status.slowCount++;
+            judgeType = 1;
+            if (!isAuto) {
+                status.goodCount++; status.combo++;
+                if (isFast) status.fastCount++; else status.slowCount++;
+            }
         } else {
-            status.badCount++;
-            status.combo = 0;
             judgeType = 0;
+            if (!isAuto) {
+                status.badCount++;
+                status.combo = 0;
+            }
             if (n.isLN) {
                 n.isBeingPressed = false;
                 n.played         = true;
@@ -327,16 +346,17 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, SoundManager& 
 
         finalJudge = judgeType;
 
-        // ★修正：JudgeUI.kind を使い、string 代入を完全に排除
-        auto uiData = judgeManager.getJudgeUIData(judgeType);
-        currentJudge.kind      = uiData.kind;
-        currentJudge.startTime = now;
-        currentJudge.active    = true;
-        currentJudge.isFast    = isFast;
-        currentJudge.isSlow    = isSlow;
-
-        if (status.combo > status.maxCombo) status.maxCombo = status.combo;
-        judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
+        // ★修正: isAuto レーンは判定表示・ゲージ更新をスキップ
+        if (!isAuto) {
+            auto uiData = judgeManager.getJudgeUIData(judgeType);
+            currentJudge.kind      = uiData.kind;
+            currentJudge.startTime = now;
+            currentJudge.active    = true;
+            currentJudge.isFast    = isFast;
+            currentJudge.isSlow    = isSlow;
+            if (status.combo > status.maxCombo) status.maxCombo = status.combo;
+            judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
+        }
 
         if (status.isFailed) snd.stopAll();
         break;
@@ -449,6 +469,10 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+
+
+
 
 
 

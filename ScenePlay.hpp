@@ -9,13 +9,6 @@
 #include "CommonTypes.hpp"
 #include "BMSData.hpp"
 
-// ボムの独立したアニメーション管理用
-struct BombAnim {
-    int lane;
-    uint32_t startTime;
-    int judgeType; // 0:なし, 1:P-GREAT, 2:GREAT, 3:その他
-};
-
 // 前方宣言
 class PlayEngine;
 class BgaManager; 
@@ -40,8 +33,19 @@ private:
     int getLaneFromJoystickButton(int btn);
 
     // --- メンバ変数 ---
-    std::vector<ActiveEffect> effects;  
-    std::vector<BombAnim> bombAnims; 
+    // ★修正: effects / bombAnims を std::vector から固定サイズ配列に変更。
+    //        旧実装は reserve(64) していたが、連打譜面で容量を超えた瞬間に
+    //        realloc + コピーが走り、入力応答にスパイクが発生していた。
+    //        リズムゲームでの入力遅延は致命的。
+    //        8レーン × 同時押し = 最大8エフェクト。128で絶対に枯渇しない。
+    //        固定配列なら push/pop が O(1) 保証、ヒープアロケーション ゼロ。
+    static constexpr size_t MAX_EFFECTS = 128;
+    static constexpr size_t MAX_BOMBS   = 128;
+    ActiveEffect effectsBuf[MAX_EFFECTS];
+    BombAnim     bombAnimsBuf[MAX_BOMBS];
+    size_t       effectCount = 0;
+    size_t       bombCount   = 0;
+
     PlayStatus status;          
     BMSHeader currentHeader;
 
@@ -55,6 +59,8 @@ private:
     bool scratchDownActive = false;
 
     uint32_t lastStartPressTime = 0;
+    uint32_t lastLNBombTime[9] = {};  // LN押下中ボム: レーンごとの最終発火時刻
+    int      lnHitJudge[9]     = {};  // LN押下時の判定結果 (0=なし,2=GREAT,3=PGREAT)
     int backupSudden = 300; 
     
     // 最適化用インデックス
@@ -62,6 +68,10 @@ private:
 };
 
 #endif
+
+
+
+
 
 
 

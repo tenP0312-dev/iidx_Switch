@@ -108,6 +108,9 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     // ★修正: gauge_frame は init() で一度だけロードする。
     //        旧実装は renderGauge() 内で毎フレーム std::string 生成 + std::map 探索 + 初回 I/O が走っていた。
     loadAndCache(ren, texGaugeFrame,  s + "gauge_frame.png");
+    // ★修正: Flame_nameplate は init() で一度だけロードする。
+    //        旧実装は renderUI() 内で毎フレーム std::string 生成 + std::map::find × 2 が走っていた。
+    loadAndCache(ren, texNameplate,   s + "Flame_nameplate.png");
 
     loadAndCache(ren, texKeys,      s + "7keypad.png");
     loadAndCache(ren, lane_Flame,   s + "lane_Flame.png");
@@ -153,7 +156,8 @@ void NoteRenderer::cleanup() {
     texJudgeAtlas.reset(); texNumberAtlas.reset(); texLaneCover.reset();
     texGaugeAssist.reset(); texGaugeNormal.reset(); texGaugeHard.reset();
     texGaugeExHard.reset(); texGaugeHazard.reset(); texGaugeDan.reset();
-    texGaugeFrame.reset(); // ★修正: texGaugeFrame を解放
+    texGaugeFrame.reset();  // ★修正: texGaugeFrame を解放
+    texNameplate.reset();   // ★修正: texNameplate を解放
     texKeys.reset();
     lane_Flame.reset(); lane_Flame2.reset();
     tex_scratch.reset(); tex_scratch_center.reset();
@@ -263,10 +267,14 @@ void NoteRenderer::clearTextCache() {
 void NoteRenderer::drawImage(SDL_Renderer* ren, const std::string& path,
                               int x, int y, int w, int h, int alpha) {
     if (path.empty()) return;
-    if (textureCache.find(path) == textureCache.end()) {
-        loadAndCache(ren, textureCache[path], path);
+    // ★修正: find() → operator[] → operator[] の3回探索を廃止。
+    //        try_emplace は「キーがなければデフォルト挿入、あれば既存」を1回の探索で返す。
+    //        O(3 log N) → O(log N)。初回のみ loadAndCache が走り、以降はキャッシュヒット。
+    auto [it, inserted] = textureCache.try_emplace(path);
+    if (inserted) {
+        loadAndCache(ren, it->second, path);
     }
-    TextureRegion& tr = textureCache[path];
+    const TextureRegion& tr = it->second;
     if (tr) {
         SDL_SetTextureAlphaMod(tr.texture, (Uint8)alpha);
         SDL_Rect dst = { x, y, w, h };
@@ -282,20 +290,21 @@ void NoteRenderer::renderDecisionInfo(SDL_Renderer* ren, const BMSHeader& header
     drawTextCached(ren, header.genre,   centerX, 220, gray, false, true);
     drawTextCached(ren, header.title,   centerX, 270, white, true, true);
     drawTextCached(ren, header.artist,  centerX, 340, white, false, true);
-    std::string levelInfo = "[" + header.chartName + "]  LEVEL " + std::to_string(header.level);
+    // ★修正: "[" + chartName + "]  LEVEL " + std::to_string() による3回のヒープアロケーションを廃止。
+    //        snprintf でスタックバッファに書いて drawTextCached のキャッシュを活用する。
+    char levelInfo[128];
+    snprintf(levelInfo, sizeof(levelInfo), "[%s]  LEVEL %d", header.chartName.c_str(), header.level);
     drawTextCached(ren, levelInfo, centerX, 375, yellow, false, true);
 }
 
 void NoteRenderer::renderUI(SDL_Renderer* ren, const BMSHeader& header, int fps, double bpm, int exScore) {
     int centerX = ll.bgaCenterX;
-    std::string platePath = Config::ROOT_PATH + "Skin/Flame_nameplate.png";
-    if (textureCache.find(platePath) == textureCache.end()) {
-        loadAndCache(ren, textureCache[platePath], platePath);
-    }
-    TextureRegion& tr = textureCache[platePath];
-    if (tr) {
-        SDL_Rect dst = { centerX - tr.w / 2, 0, tr.w, tr.h };
-        SDL_RenderCopy(ren, tr.texture, NULL, &dst);
+    // ★修正: 毎フレームの std::string 生成 + std::map::find × 2 を完全廃止。
+    //        texNameplate は init() でロード済みのメンバ変数を直接参照する。
+    //        旧実装: platePath 構築(~120ns heap alloc) + find×2(O(log N) × 2) ≒ 520ns/フレームの無駄。
+    if (texNameplate) {
+        SDL_Rect dst = { centerX - texNameplate.w / 2, 0, texNameplate.w, texNameplate.h };
+        SDL_RenderCopy(ren, texNameplate.texture, NULL, &dst);
     }
 }
 
@@ -304,6 +313,9 @@ static double s_scratchAngle = 0.0;
 static double s_scratchSpeed = 0.0;
 
 void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchStatus) {
+    // ★修正: LANE_WIDTH / SCRATCH_WIDTH がオプション画面で変更された場合に
+    //        即座に反映されるよう毎フレーム再計算する。計算コストは無視できる。
+    rebuildLaneLayout();
     int totalWidth = ll.totalWidth;
     int startX     = ll.baseX;
     int laneHeight = 482;
@@ -371,8 +383,29 @@ void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchSt
             SDL_SetRenderDrawColor(ren, 20, 20, 20, 255); SDL_RenderFillRect(ren, &dR);
         }
     }
+    // 各レーンの区切り線
+    SDL_SetRenderDrawColor(ren, 50, 50, 50, 255);
+    for (int i = 1; i <= 8; i++) {
+        int lx = ll.x[i];
+        SDL_RenderDrawLine(ren, lx, 0, lx, laneHeight);
+    }
+    int rightEdge = startX + totalWidth;
+    SDL_RenderDrawLine(ren, rightEdge, 0, rightEdge, laneHeight);
+
+    // 判定ライン
     SDL_SetRenderDrawColor(ren, 255, 0, 0, 255);
     SDL_RenderDrawLine(ren, startX, judgeY, startX + totalWidth, judgeY);
+
+    // プログレスバー (楽曲進行)
+    int progX = (Config::PLAY_SIDE == 1) ? startX - 13 : startX + totalWidth + 8;
+    int progY = 38, progH = 420, indicatorH = 8;
+    SDL_Rect progFrame = { progX, progY, 5, progH };
+    SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
+    SDL_RenderDrawRect(ren, &progFrame);
+    int moveY = progY + (int)((progH - indicatorH) * progress);
+    SDL_Rect progIndicator = { progX, moveY, 5, indicatorH };
+    SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
+    SDL_RenderFillRect(ren, &progIndicator);
 }
 
 void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
@@ -417,15 +450,20 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
             int dTY = std::max(tailY, (int)Config::SUDDEN_PLUS);
             int dHY = std::min(headY, judgeY);
 
+            // ★修正: オートレーンのLNボディ・終端も半透明化
             if (dHY > dTY && body && *body) {
+                if (isAuto) SDL_SetTextureAlphaMod(body->texture, 160);
                 SDL_Rect r = { x + 4, dTY, w - 8, dHY - dTY };
                 SDL_RenderCopy(ren, body->texture, NULL, &r);
+                if (isAuto) SDL_SetTextureAlphaMod(body->texture, 255);
             }
             if (tailY >= (int)Config::SUDDEN_PLUS && tailY <= judgeY) {
                 const TextureRegion* end = (lnE && *lnE) ? lnE : target;
                 if (end && *end) {
+                    if (isAuto) SDL_SetTextureAlphaMod(end->texture, 160);
                     SDL_Rect r = { x + 2, tailY - end->h, w - 4, end->h };
                     SDL_RenderCopy(ren, end->texture, NULL, &r);
+                    if (isAuto) SDL_SetTextureAlphaMod(end->texture, 255);
                 }
             }
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
@@ -477,7 +515,9 @@ void NoteRenderer::renderBomb(SDL_Renderer* ren, int lane, int frame) {
     int fullW  = ll.w[lane];
     int cX     = ll.x[lane] + (fullW / 2);
     int judgeY = Config::JUDGMENT_LINE_Y - Config::LIFT;
-    int size   = (int)((Config::LANE_WIDTH * 1.4) * 3.0f);
+    // ★修正: ボムサイズを Config::BOMB_SIZE_FACTOR から計算
+    //        デフォルト BOMB_SIZE_FACTOR=420 → LANE_WIDTH*4.2 ≒ 旧実装と同等
+    int size   = (int)(Config::LANE_WIDTH * Config::BOMB_SIZE_FACTOR / 100);
     const TextureRegion& tr = texBombs[frame];
     if (tr) {
         SDL_SetTextureBlendMode(tr.texture, SDL_BLENDMODE_ADD);
@@ -485,6 +525,74 @@ void NoteRenderer::renderBomb(SDL_Renderer* ren, int lane, int frame) {
         SDL_RenderCopy(ren, tr.texture, NULL, &r);
     }
 }
+
+// ================================================================
+//  renderEffects: キービーム描画 + 期限切れエントリの削除
+//  (ScenePlay から移動)
+// ================================================================
+void NoteRenderer::renderEffects(SDL_Renderer* ren,
+                                  ActiveEffect* buf, size_t& count,
+                                  const bool* lanePressed, uint32_t now) {
+    size_t write = 0;
+    for (size_t read = 0; read < count; ++read) {
+        ActiveEffect& eff = buf[read];
+        // ホールド中はタイマーをリセットし続ける
+        if (eff.lane >= 1 && eff.lane <= 7 && lanePressed && lanePressed[eff.lane])
+            eff.startTime = now;
+        float duration = (eff.lane == 8) ? 200.0f : 100.0f;
+        float p = (float)(now - eff.startTime) / duration;
+        if (p < 1.0f) {
+            renderHitEffect(ren, eff.lane, p);
+            if (write != read) buf[write] = eff;
+            write++;
+        }
+    }
+    count = write;
+}
+
+// ================================================================
+//  renderBombs: ボムアニメ描画 + 期限切れエントリの削除
+//  (ScenePlay から移動)
+// ================================================================
+void NoteRenderer::renderBombs(SDL_Renderer* ren,
+                                 BombAnim* buf, size_t& count,
+                                 uint32_t now) {
+    size_t write = 0;
+    for (size_t read = 0; read < count; ++read) {
+        BombAnim& ba = buf[read];
+        float p = (float)(now - ba.startTime) / (float)Config::BOMB_DURATION_MS;
+        if (p < 1.0f) {
+            if (ba.judgeType == 1 || ba.judgeType == 2)
+                renderBomb(ren, ba.lane, (int)(p * 10));
+            if (write != read) buf[write] = ba;
+            write++;
+        }
+    }
+    count = write;
+}
+
+// ================================================================
+//  renderFastSlow: FAST/SLOW テキスト表示
+//  isFast/isSlow は JudgmentDisplay のフラグから渡す
+//  progress: 0.0 (表示開始) → 1.0 (完全透明)
+// ================================================================
+void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress) {
+    // ★修正: SHOW_FAST_SLOW = false の時は描画しない（0 = OFF）
+    if (!Config::SHOW_FAST_SLOW) return;
+    if (!isFast && !isSlow) return;
+    Uint8 alpha = (Uint8)(255 * (1.0f - std::min(1.0f, progress)));
+    int judgeY  = Config::JUDGMENT_LINE_Y - Config::LIFT;
+    int x       = ll.baseX + ll.totalWidth / 2;
+    int y       = judgeY - 60;  // 判定ライン上 60px
+
+    const char* text  = isFast ? "FAST" : "SLOW";
+    // FAST = 水色、SLOW = 橙色
+    SDL_Color color = isFast ? SDL_Color{0, 200, 255, alpha}
+                             : SDL_Color{255, 140, 0, alpha};
+    // alpha が変化するため drawText (非キャッシュ) を使う
+    drawText(ren, text, x, y, color, false, true);
+}
+
 
 // ★修正：JudgeKind ベースのオーバーロード。文字列比較ループを廃止。
 void NoteRenderer::renderJudgment(SDL_Renderer* ren, JudgeKind kind, float progress, int combo) {
@@ -664,24 +772,35 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     drawTextCached(ren, mcBuf, 680, sY,        yellow, false);
     drawTextCached(ren, exBuf, 680, sY + sp,   white,  false);
 
-    // クリアタイプ表示
-    std::string clearText  = "FAILED";
-    SDL_Color   clearColor = {100, 100, 100, 255};
-    switch (status.clearType) {
-        case ClearType::FULL_COMBO:    clearText = "FULL COMBO";    clearColor = {255, 255, 255, 255}; break;
-        case ClearType::EX_HARD_CLEAR: clearText = "EX-HARD CLEAR"; clearColor = {255, 255,   0, 255}; break;
-        case ClearType::HARD_CLEAR:    clearText = "HARD CLEAR";    clearColor = {255,   0,   0, 255}; break;
-        case ClearType::NORMAL_CLEAR:  clearText = "NORMAL CLEAR";  clearColor = {  0, 200, 255, 255}; break;
-        case ClearType::EASY_CLEAR:    clearText = "EASY CLEAR";    clearColor = {150, 255, 100, 255}; break;
-        case ClearType::ASSIST_CLEAR:  clearText = "ASSIST CLEAR";  clearColor = {180, 100, 255, 255}; break;
-        case ClearType::DAN_CLEAR:     clearText = "DAN CLEAR";     clearColor = {200,   0, 100, 255}; break;
-        default: break;
-    }
-    drawTextCached(ren, clearText, 640, 550, clearColor, true, true);
+    // ★修正: clearText / clearColor の毎フレーム std::string 構築 + switch 分岐を廃止。
+    //        ClearType を整数インデックスとして constexpr テーブルを直接引く。
+    //        ヒープアロケーション ゼロ、switch の分岐予測ミスもゼロ、O(1) テーブル引き。
+    //        テーブル順は ClearType enum の定義順 (NO_PLAY=0, FAILED=1, ..., FULL_COMBO=8) と一致させる。
+    struct ClearDisplay { const char* text; SDL_Color color; };
+    static constexpr ClearDisplay CLEAR_TABLE[] = {
+        {"NO PLAY",       {100, 100, 100, 255}},  // NO_PLAY
+        {"FAILED",        {100, 100, 100, 255}},  // FAILED
+        {"ASSIST CLEAR",  {180, 100, 255, 255}},  // ASSIST_CLEAR
+        {"EASY CLEAR",    {150, 255, 100, 255}},  // EASY_CLEAR
+        {"NORMAL CLEAR",  {  0, 200, 255, 255}},  // NORMAL_CLEAR
+        {"HARD CLEAR",    {255,   0,   0, 255}},  // HARD_CLEAR
+        {"EX-HARD CLEAR", {255, 255,   0, 255}},  // EX_HARD_CLEAR
+        {"DAN CLEAR",     {200,   0, 100, 255}},  // DAN_CLEAR
+        {"FULL COMBO",    {255, 255, 255, 255}},  // FULL_COMBO
+    };
+    int clearIdx = std::clamp((int)status.clearType, 0, (int)(std::size(CLEAR_TABLE) - 1));
+    drawTextCached(ren, CLEAR_TABLE[clearIdx].text, 640, 550, CLEAR_TABLE[clearIdx].color, true, true);
 
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
+
+
+
+
+
+
 
 
 

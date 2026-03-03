@@ -46,21 +46,37 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine, SoundManager& sn
         
         if (isAutoLane(n.lane)) {
             if (!n.isBeingPressed && cur_ms >= n.target_ms) {
-                engine.processHit(n.lane, n.target_ms, now, snd);
-                
+                // ★修正: 完全オート(ASSIST_OPTION==7)はスコア・コンボ加算あり。
+                //        部分オート（スクラッチ/5kオート）はそのレーンを加算しない。
+                bool isPartialAuto = (Config::ASSIST_OPTION != 7);
+                int resultJudge = engine.processHit(n.lane, n.target_ms, now, snd, isPartialAuto);
+
                 bool found = false;
-                for (auto& eff : effects) {
-                    if (eff.lane == n.lane) {
-                        eff.startTime = now;
+                for (size_t ei = 0; ei < effectCount; ++ei) {
+                    if (effectsBuf[ei].lane == n.lane) {
+                        effectsBuf[ei].startTime = now;
                         found = true;
                         break;
                     }
                 }
-                if (!found) effects.push_back({n.lane, now});
-                bombAnims.push_back({n.lane, now, 2});
+                if (!found && effectCount < MAX_EFFECTS)
+                    effectsBuf[effectCount++] = {n.lane, now};
+                if (bombCount < MAX_BOMBS)
+                    bombAnimsBuf[bombCount++] = {n.lane, now, 2};
+
+                // ★修正: オートLNの持続ボム用に判定結果を保存。
+                //        旧実装は lnHitJudge を processInput() 内でしかセットしなかったため
+                //        オートレーンでは常に 0 のまま → LN持続ボムが出なかった。
+                if (n.isLN) {
+                    lnHitJudge[n.lane]     = resultJudge;
+                    lastLNBombTime[n.lane] = now;
+                }
             }
             if (n.isLN && n.isBeingPressed && cur_ms >= n.target_ms + n.duration_ms) {
                 engine.processRelease(n.lane, n.target_ms + n.duration_ms, now);
+                // ★修正: LNリリース時にリセット（手動入力と同じ処理）
+                lnHitJudge[n.lane]     = 0;
+                lastLNBombTime[n.lane] = 0;
             }
         }
     }
@@ -68,132 +84,157 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine, SoundManager& sn
 
 // --- メインロジック ---
 bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer, const std::string& bmsonPath) {
-    // 1. 前の曲の残骸を完全に消し去る (断片化対策の第一歩)
+    // ─────────────────────────────────────────────
+    // フェーズ 1: 前曲クリーンアップ
+    // ─────────────────────────────────────────────
     {
         BgaManager tempBga;
-        tempBga.cleanup(); 
+        tempBga.cleanup();
     }
-    snd.clear(); 
+    snd.clear();
     SDL_RenderClear(ren);
     SDL_RenderPresent(ren);
-    SDL_Delay(200); 
+    SDL_Delay(200);
 
-    // 2. BMSONのパース (この内部でJSONがパースされ、そして即座に破棄される)
-    int lastParsePercent = -1;
-    BMSData data = BmsonLoader::load(bmsonPath, [&](float progress) {
-        int curPercent = (int)(progress * 100);
-        if (curPercent != lastParsePercent) {
-            renderer.renderLoading(ren, curPercent, 100, "Parsing Bmson...");
-            SDL_RenderPresent(ren);
-            lastParsePercent = curPercent;
-        }
-        SDL_Event e; while(SDL_PollEvent(&e));
+    // ─────────────────────────────────────────────
+    // フェーズ 2: BMSON パースのみ
+    // ここに含まれるのは JSON 解析だけ。
+    // 動画・BGA・音声は一切触らない。
+    // ─────────────────────────────────────────────
+    {
+        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
+        SDL_RenderClear(ren);
+        renderer.renderBackground(ren);
+        renderer.renderLanes(ren, 0.0, 0);
+        renderer.drawText(ren, "BMSON Loading...", renderer.getLaneCenterX(),
+                          450, {255, 255, 0, 255}, false, true);
+        SDL_RenderPresent(ren);
+    }
+    BMSData data = BmsonLoader::load(bmsonPath, [&](float /*progress*/) {
+        SDL_Event e; while (SDL_PollEvent(&e));
     });
 
     if (data.sound_channels.empty()) return true;
 
-    // 3. パース終了～音声ロード開始の「隙間」を作る
-    // ここでJSONの巨大なメモリが解放され、ヒープに空きができる
-    SDL_Delay(100); 
+    // JSON DOM をここで破棄させる（スコープ外に出ているため自動解放済み）
+    SDL_Delay(100);
 
+    // ─────────────────────────────────────────────
+    // フェーズ 3: エンジン・BGA 初期化 → プレイ画面を表示
+    // BMSON パース完了 → ヘッダー情報が揃ったのでタイトル等を描画できる。
+    // 動画ロード(bga.loadBgaFile)もここで行い、完了したら即座に画面を更新する。
+    // ─────────────────────────────────────────────
     currentHeader = data.header;
     Config::HIGH_SPEED = (double)Config::HS_BASE / (std::max(1, Config::GREEN_NUMBER) * data.header.bpm);
 
     PlayEngine engine;
     engine.init(data);
     drawStartIndex = 0;
-    
-    // BGA初期化
+
     BgaManager bga;
     bga.init(data.bga_images.size());
-    bga.setEvents(data.bga_events);      
-    bga.setLayerEvents(data.layer_events); 
-    bga.setPoorEvents(data.poor_events);   
+    bga.setEvents(data.bga_events);
+    bga.setLayerEvents(data.layer_events);
+    bga.setPoorEvents(data.poor_events);
 
-    effects.clear();
-    effects.reserve(64); 
-    bombAnims.clear(); 
-    bombAnims.reserve(64); 
-    for(int i=0; i<9; ++i) lanePressed[i] = false;
+    effectCount = 0;
+    bombCount   = 0;
+    for (int i = 0; i < 9; ++i) {
+        lanePressed[i]    = false;
+        lnHitJudge[i]     = 0;
+        lastLNBombTime[i] = 0;
+    }
 
-    isAssistUsed = (Config::ASSIST_OPTION > 0);
+    isAssistUsed       = (Config::ASSIST_OPTION > 0);
     startButtonPressed = false;
-    effectButtonPressed = false;
-    scratchUpActive = false;
-    scratchDownActive = false;
+    effectButtonPressed= false;
+    scratchUpActive    = false;
+    scratchDownActive  = false;
     lastStartPressTime = 0;
     if (Config::SUDDEN_PLUS > 0) backupSudden = Config::SUDDEN_PLUS;
 
     std::string bmsonDir = "";
     size_t lastSlash = bmsonPath.find_last_of("/\\");
-    if (lastSlash != std::string::npos) {
+    if (lastSlash != std::string::npos)
         bmsonDir = bmsonPath.substr(0, lastSlash + 1);
-    } else {
+    else
         bmsonDir = Config::ROOT_PATH;
-    }
 
     bga.setBgaDirectory(bmsonDir);
 
     if (!data.header.bga_video.empty()) {
-        std::string videoFile = data.header.bga_video;
-        std::string fullVideoPath = bmsonDir + videoFile;
-        bga.loadBgaFile(fullVideoPath, ren);
+        bga.loadBgaFile(bmsonDir + data.header.bga_video, ren);
     }
-
     for (auto const& [id, filename] : data.bga_images) {
         bga.registerPath(id, filename);
     }
 
-    // 4. 音声インデックス作成とバルクロード
-    // JSONが消えて「きれいになったヒープ」に対して大きな音声を確保しにいく
-    std::string bmsonBaseName = "";
-    size_t lastDot = bmsonPath.find_last_of(".");
-    if (lastDot != std::string::npos && lastDot > lastSlash) {
-        bmsonBaseName = bmsonPath.substr(lastSlash + 1, lastDot - lastSlash - 1);
-    } else {
-        bmsonBaseName = data.header.title; 
+    // エンジン・BGA 準備完了 → タイトル・アーティスト・レベルを含む画面を表示
+    {
+        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
+        SDL_RenderClear(ren);
+        renderer.renderBackground(ren);
+        renderer.renderLanes(ren, 0.0, 0);
+        renderer.renderDecisionInfo(ren, currentHeader);
+        SDL_RenderPresent(ren);
     }
 
-    renderer.renderLoading(ren, 0, (int)data.sound_channels.size(), "Indexing BoxWav Files...");
-    SDL_RenderPresent(ren);
+    // ─────────────────────────────────────────────
+    // フェーズ 4: BoxWav インデックス構築 → 音声ロード
+    // ローディング中はプレイ背景 + タイトル情報 + テキストを表示。
+    // renderScene() は呼ばない（bga.render() による動画デコードを避けるため）。
+    // ─────────────────────────────────────────────
+    std::string bmsonBaseName = "";
+    {
+        size_t lastDot = bmsonPath.find_last_of(".");
+        if (lastDot != std::string::npos && lastDot > lastSlash)
+            bmsonBaseName = bmsonPath.substr(lastSlash + 1, lastDot - lastSlash - 1);
+        else
+            bmsonBaseName = data.header.title;
+    }
+
+    auto showLoadingScreen = [&](const char* text) {
+        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
+        SDL_RenderClear(ren);
+        renderer.renderBackground(ren);
+        renderer.renderLanes(ren, 0.0, 0);
+        renderer.renderDecisionInfo(ren, currentHeader);
+        renderer.drawTextCached(ren, text, renderer.getLaneCenterX(),
+                                450, {255, 255, 0, 255}, false, true);
+        SDL_RenderPresent(ren);
+    };
+
+    showLoadingScreen("BOXWAV Loading...");
     snd.preloadBoxIndex(bmsonDir, bmsonBaseName);
 
-    std::vector<std::string> soundList;
-    soundList.reserve(data.sound_channels.size());
+    // BGM を先頭に並べて MAX_WAV_MEMORY 到達時でも BGM が確実にロードされるようにする
+    std::vector<std::string> soundListBGM;
+    std::vector<std::string> soundListKeys;
+    soundListBGM.reserve(data.sound_channels.size());
+    soundListKeys.reserve(data.sound_channels.size());
+
     for (const auto& ch : data.sound_channels) {
-        soundList.push_back(ch.name);
+        if (ch.name.empty()) continue;
+        bool isBgmOnly = !ch.notes.empty() &&
+                         std::all_of(ch.notes.begin(), ch.notes.end(),
+                                     [](const BMSNote& n) { return n.x < 1 || n.x > 8; });
+        if (isBgmOnly) soundListBGM.push_back(ch.name);
+        else           soundListKeys.push_back(ch.name);
     }
 
-    // 指摘のあった「二重消費」はSoundManager側で修正済みのため、安心して呼べる
-    int lastLoadPercent = -1;
-    snd.loadSoundsInBulk(soundList, bmsonDir, bmsonBaseName, [&](int processedCount, const std::string& currentName) {
-        int curPercent = (processedCount * 100) / (int)data.sound_channels.size();
+    std::vector<std::string> soundList;
+    soundList.reserve(soundListBGM.size() + soundListKeys.size());
+    soundList.insert(soundList.end(), soundListBGM.begin(), soundListBGM.end());
+    soundList.insert(soundList.end(), soundListKeys.begin(), soundListKeys.end());
 
-        if (curPercent != lastLoadPercent) {
-            renderer.renderLoading(ren, processedCount, data.sound_channels.size(), "Audio Loading: " + currentName);
-            
-            uint64_t curMem = snd.getCurrentMemory();
-            uint64_t maxMem = snd.getMaxMemory();
-            double curMB = (double)curMem / (1024.0 * 1024.0);
-            double maxMB = (double)maxMem / (1024.0 * 1024.0);
-            char memBuf[128];
-            snprintf(memBuf, sizeof(memBuf), "WAV Memory: %.1f / %.1f MB", curMB, maxMB);
-            renderer.drawText(ren, memBuf, 640, 580, {200, 200, 200, 255}, false, true);
-            
-            if (curMem >= maxMem - (1024 * 1024 * 5)) { // 警告しきい値を5MB程度に調整
-                renderer.drawText(ren, "WARNING: MEMORY LIMIT REACHED (SKIPPING)", 640, 620, {255, 50, 50, 255}, false, true);
-            }
-            
-            SDL_RenderPresent(ren);
-            lastLoadPercent = curPercent;
-        }
-
-        if (processedCount % 100 == 0) {
+    showLoadingScreen("AUDIO Loading...");
+    snd.loadSoundsInBulk(soundList, bmsonDir, bmsonBaseName, [&](int processedCount, const std::string&) {
+        // 200件ごとに表示更新 + イベント処理（renderScene は呼ばない）
+        if (processedCount % 200 == 0) {
+            showLoadingScreen("AUDIO Loading...");
             SDL_Event e; while(SDL_PollEvent(&e));
         }
     });
-
-    SDL_Delay(100);
 
     double videoOffsetMs = 0.0;
     if (data.header.bga_offset != 0) {
@@ -221,21 +262,6 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
         if (!n.isBGM) max_target_ms = std::max(max_target_ms, n.target_ms);
     }
 
-    uint32_t readyStartTime = SDL_GetTicks();
-    const uint32_t READY_DURATION = 5000; 
-    while (SDL_GetTicks() - readyStartTime < READY_DURATION) {
-        uint32_t now = SDL_GetTicks();
-        if (!processInput(-2000.0, now, snd, engine)) return false;
-        bga.preLoad(0, ren);
-        renderScene(ren, renderer, engine, bga, -2000.0, 0, 0, currentHeader, now, 0.0);
-        // ★修正⑥: rebuildLaneLayout() でキャッシュ済みの値を使用（再計算を廃止）
-        renderer.drawText(ren, "Please wait 5 seconds", renderer.getLaneCenterX(), 450, {255, 255, 0, 255}, false, true);
-        SDL_RenderPresent(ren);
-#ifdef __SWITCH__
-        if (!appletMainLoop()) return false;
-#endif
-    }
-
     bool waiting = true;
     while (waiting) {
         uint32_t now = SDL_GetTicks();
@@ -250,9 +276,10 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
             }
         }
         if (!processInput(-2000.0, now, snd, engine)) return false;
+        bga.preLoad(0, ren);
         renderScene(ren, renderer, engine, bga, -2000.0, 0, 0, currentHeader, now, 0.0);
-        // ★修正⑥: rebuildLaneLayout() でキャッシュ済みの値を使用（再計算を廃止）
-        renderer.drawText(ren, "PRESS DECIDE BUTTON TO START", renderer.getLaneCenterX(), 450, {255, 255, 255, 255}, false, true);
+        renderer.drawTextCached(ren, "PRESS DECIDE BUTTON TO START",
+                                renderer.getLaneCenterX(), 450, {255, 255, 255, 255}, false, true);
         SDL_RenderPresent(ren);
 #ifdef __SWITCH__
         if (!appletMainLoop()) return false;
@@ -299,6 +326,27 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
             else { isAborted = true; playing = false; break; }
         }
         updateAssist(cur_ms, engine, snd);
+
+        // LN押下中ボム演出: GREAT/PGREAT 判定のLNを押下中、0.1秒ごとにボムを発生
+        {
+            const auto& allNotesLN = engine.getNotes();
+            for (size_t i = drawStartIndex; i < allNotesLN.size(); ++i) {
+                const auto& n = allNotesLN[i];
+                if (n.isBGM || !n.isLN || !n.isBeingPressed) continue;
+                if (n.target_ms > cur_ms + 500.0) break;
+                // GREAT(2) または PGREAT(3) のみ
+                // ★修正: 0.1秒(100ms)間隔 → ボム1周期(300ms)の半分=150ms間隔に変更。
+                //        前のボムが半分まで再生されたら新しいボムを重ねることで
+                //        「連続して輝き続ける」演出になる。
+                if (lnHitJudge[n.lane] >= 2 && now - lastLNBombTime[n.lane] >= 150) {
+                    lastLNBombTime[n.lane] = now;
+                    int bombType = (lnHitJudge[n.lane] == 3) ? 1 : 2;
+                    if (bombCount < MAX_BOMBS)
+                        bombAnimsBuf[bombCount++] = {n.lane, now, bombType};
+                }
+            }
+        }
+
         engine.update(cur_ms + 10.0, now, snd);
         // ★修正①: const ref で受け取ることで gaugeHistory (最大 2000 要素) の
         //          毎フレームコピーを完全に排除。432KB/秒のヒープコピー帯域を節約。
@@ -328,15 +376,21 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
                 while (SDL_GetTicks() - fcStart < 2500) {
                     uint32_t nowFC = SDL_GetTicks();
                     float p = std::min(1.0f, (float)(nowFC - fcStart) / 1000.0f);
+
+                    // ★修正: FCループ中も入力処理を行う。
+                    //        旧実装は SDL_PollEvent を呼ばず SDL_Delay(1) で待機するだけだったため
+                    //        Switch の入力イベントキューが詰まりフリーズしていた。
+                    if (!processInput(cur_ms, nowFC, snd, engine)) break;
+
                     renderScene(ren, renderer, engine, bga, cur_ms, cur_y, fps, currentHeader, nowFC, 1.0);
                     if (gradTex) {
                         int lineY = Config::JUDGMENT_LINE_Y;
-                        int uvOffset = (int)(nowFC * 1) % TEX_H; 
+                        int uvOffset = (int)(nowFC * 1) % TEX_H;
                         SDL_Rect srcRect = { 0, uvOffset, 1, TEX_H / 2 };
-                        SDL_Rect dstRect = { baseX, 0, totalWidth, lineY }; 
+                        SDL_Rect dstRect = { baseX, 0, totalWidth, lineY };
                         SDL_SetTextureBlendMode(gradTex, SDL_BLENDMODE_BLEND);
                         SDL_SetTextureColorMod(gradTex, 0, 255, 255);
-                        SDL_SetTextureAlphaMod(gradTex, (Uint8)((1.0f - p) * 200)); 
+                        SDL_SetTextureAlphaMod(gradTex, (Uint8)((1.0f - p) * 200));
                         SDL_RenderCopy(ren, gradTex, &srcRect, &dstRect);
                         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
                         SDL_SetRenderDrawColor(ren, 0, 255, 255, (Uint8)((1.0f - p) * 255));
@@ -346,12 +400,11 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
                     }
                     SDL_Color fcColor;
                     uint32_t t = nowFC / 80;
-                    if (t % 3 == 0)      fcColor = {0, 255, 255, 255}; 
-                    else if (t % 3 == 1) fcColor = {0, 200, 255, 255}; 
+                    if (t % 3 == 0)      fcColor = {0, 255, 255, 255};
+                    else if (t % 3 == 1) fcColor = {0, 200, 255, 255};
                     else                  fcColor = {255, 255, 255, 255};
                     renderer.drawText(ren, "FULL COMBO", laneCenterX, 200, fcColor, true, true);
                     SDL_RenderPresent(ren);
-                    SDL_Delay(1);
 #ifdef __SWITCH__
                     if (!appletMainLoop()) break;
 #endif
@@ -433,25 +486,31 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
                 if (isDown) {
                     if (!engine.getStatus().isFailed && cur_ms >= -500.0) {
                         int resultJudge = engine.processHit(lane, cur_ms, now, snd);
-                        
+
+                        // LN押下時の判定を保存 (押下中ボム演出で参照)
+                        lnHitJudge[lane] = resultJudge;
+
                         bool found = false;
-                        for (auto& eff : effects) {
-                            if (eff.lane == lane) {
-                                eff.startTime = now; 
+                        for (size_t ei = 0; ei < effectCount; ++ei) {
+                            if (effectsBuf[ei].lane == lane) {
+                                effectsBuf[ei].startTime = now;
                                 found = true;
                                 break;
                             }
                         }
-                        if (!found) effects.push_back({lane, now});
+                        if (!found && effectCount < MAX_EFFECTS)
+                            effectsBuf[effectCount++] = {lane, now};
 
                         if (resultJudge >= 2) {
                             int bombType = (resultJudge == 3) ? 1 : 2;
-                            bombAnims.push_back({lane, now, bombType});
+                            if (bombCount < MAX_BOMBS)
+                                bombAnimsBuf[bombCount++] = {lane, now, bombType};
                         }
                     }
                 } else {
                     if (!engine.getStatus().isFailed && cur_ms >= -500.0) {
                         engine.processRelease(lane, cur_ms, now);
+                        lnHitJudge[lane] = 0;  // 離したらクリア
                     }
                 }
             }
@@ -493,23 +552,9 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
         }
     }
 
-    effects.erase(std::remove_if(effects.begin(), effects.end(), [&](auto& eff) {
-        if (eff.lane >= 1 && eff.lane <= 7 && lanePressed[eff.lane]) eff.startTime = now;
-        float duration = (eff.lane == 8) ? 200.0f : 100.0f;
-        float p = (float)(now - eff.startTime) / duration;
-        if (p >= 1.0f) return true;
-        renderer.renderHitEffect(ren, eff.lane, p);
-        return false;
-    }), effects.end());
-
-    bombAnims.erase(std::remove_if(bombAnims.begin(), bombAnims.end(), [&](auto& ba) {
-        float p = (float)(now - ba.startTime) / 300.0f;
-        if (p >= 1.0f) return true;
-        if (ba.judgeType == 1 || ba.judgeType == 2) renderer.renderBomb(ren, ba.lane, (int)(p * 10));
-        return false;
-    }), bombAnims.end());
-
     // --- ノーツ描画（スライディング・ウィンドウ）---
+    // ★修正: notes を先に描画し、effects/bombs を後から重ねる。
+    //        旧実装では bombs → notes の順だったため、LNの上にボムが隠れていた。
     const auto& allNotes = engine.getNotes();
 
     while (drawStartIndex < allNotes.size()
@@ -521,18 +566,21 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
     for (size_t i = drawStartIndex; i < allNotes.size(); ++i) {
         const auto& n = allNotes[i];
 
-        // Y座標ベースで可視範囲チェック
         double y_diff = (double)(n.y - cur_y);
         if (!n.isBeingPressed && y_diff > max_visible_y) break;
 
         if ((!n.played || n.isBeingPressed) && !n.isBGM) {
-            // LN終点のY差分でカリング判定
             double end_y_diff = n.isLN ? (double)(n.y + n.l - cur_y) : y_diff;
             if (end_y_diff > -5000.0) {
                 renderer.renderNote(ren, n, cur_y, pixels_per_y, isAutoLane(n.lane));
             }
         }
     }
+
+    // エフェクト(キービーム) → ボムの順で描画 (ノーツより前面)
+    // ★修正: 描画ループを NoteRenderer に移動し、ScenePlay は呼び出すだけにする。
+    renderer.renderEffects(ren, effectsBuf, effectCount, lanePressed, now);
+    renderer.renderBombs(ren, bombAnimsBuf, bombCount, now);
 
     int laneCenterX = renderer.getLaneCenterX();
 
@@ -543,6 +591,10 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
         else {
             if (judge.kind == JudgeKind::PGREAT || (now / 32) % 2 != 0) {
                 renderer.renderJudgment(ren, judge.kind, 0.0f, engine.getStatus().combo);
+            }
+            // ★新規: FAST/SLOW 表示 (NoteRenderer に実装)
+            if (judge.isFast || judge.isSlow) {
+                renderer.renderFastSlow(ren, judge.isFast, judge.isSlow, p_raw);
             }
         }
     }
@@ -558,7 +610,12 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
         };
         char gearText[256];
         snprintf(gearText, sizeof(gearText), "GN: %d | SUD+:%d LIFT:%d", calcSyncGN(currentBpm), Config::SUDDEN_PLUS, Config::LIFT);
-        renderer.drawText(ren, gearText, laneCenterX, 20, {0, 255, 0, 255}, false, true);
+        // ★修正: drawText → drawTextCached に変更。
+        //        drawText は毎回 TTF_RenderUTF8_Blended → SDL_CreateTextureFromSurface → SDL_DestroyTexture を行う。
+        //        START ボタン押下中は毎フレーム走り、TTF レンダリングが 0.5-2ms のスパイクになっていた。
+        //        drawTextCached はキャッシュにヒットする限りテクスチャを再利用する。
+        //        GN値は連続的に変化するが、変化しているフレームのみ TTF が走り、停止中はゼロコスト。
+        renderer.drawTextCached(ren, gearText, laneCenterX, 20, {0, 255, 0, 255}, false, true);
     }
     SDL_RenderPresent(ren);
 }
