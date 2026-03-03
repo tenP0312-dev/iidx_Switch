@@ -59,25 +59,29 @@ void SceneOption::updateItemList() {
     items.emplace_back("[ GAUGE DISPLAY ]", getValStr((Config::GAUGE_DISPLAY_TYPE == 0 ? "1% STEP" : "2% STEP (IIDX)"), 8));
     // Index 9: START UP SCREEN
     items.emplace_back("[ START UP SCREEN ]", getValStr((Config::START_UP_OPTION == 0 ? "TITLE" : "SELECT"), 9));
+    // Index 10: JUDGE OFFSET
+    items.emplace_back("[ JUDGE OFFSET (ms) ]", getValStr(std::to_string(Config::JUDGE_OFFSET), 10));
+    // Index 11: VISUAL OFFSET
+    items.emplace_back("[ VISUAL OFFSET (px) ]", getValStr(std::to_string(Config::VISUAL_OFFSET), 11));
 
-    // Index 10: Section
+    // Index 12: Section
     items.emplace_back("--- [ EFFECT SETTINGS ] ---", "");
-    // Index 11: BOMB DURATION
-    items.emplace_back("[ BOMB DURATION (ms) ]", getValStr(std::to_string(Config::BOMB_DURATION_MS), 11));
-    // Index 12: BOMB SIZE
-    items.emplace_back("[ BOMB SIZE ]", getValStr(std::to_string(Config::BOMB_SIZE_FACTOR), 12));
+    // Index 13: BOMB DURATION
+    items.emplace_back("[ BOMB DURATION (ms) ]", getValStr(std::to_string(Config::BOMB_DURATION_MS), 13));
+    // Index 14: BOMB SIZE
+    items.emplace_back("[ BOMB SIZE ]", getValStr(std::to_string(Config::BOMB_SIZE_FACTOR), 14));
 
-    // Index 13: Section
+    // Index 15: Section
     items.emplace_back("--- [ FOLDER SETTINGS ] ---", "");
-    // Index 14-19: 仮想フォルダ設定項目
-    items.emplace_back("[ FOLDER: LEVEL ]", getValStr((Config::SHOW_LEVEL_FOLDER ? "ON" : "OFF"), 14));
-    items.emplace_back("[ FOLDER: LAMP ]", getValStr((Config::SHOW_LAMP_FOLDER ? "ON" : "OFF"), 15));
-    items.emplace_back("[ FOLDER: RANK ]", getValStr((Config::SHOW_RANK_FOLDER ? "ON" : "OFF"), 16)); 
-    items.emplace_back("[ FOLDER: TYPE ]", getValStr((Config::SHOW_CHART_TYPE_FOLDER ? "ON" : "OFF"), 17));
-    items.emplace_back("[ FOLDER: NOTES ]", getValStr((Config::SHOW_NOTES_RANGE_FOLDER ? "ON" : "OFF"), 18));
-    items.emplace_back("[ FOLDER: ALPHA ]", getValStr((Config::SHOW_ALPHA_FOLDER ? "ON" : "OFF"), 19));
+    // Index 16-21: 仮想フォルダ設定項目
+    items.emplace_back("[ FOLDER: LEVEL ]", getValStr((Config::SHOW_LEVEL_FOLDER ? "ON" : "OFF"), 16));
+    items.emplace_back("[ FOLDER: LAMP ]", getValStr((Config::SHOW_LAMP_FOLDER ? "ON" : "OFF"), 17));
+    items.emplace_back("[ FOLDER: RANK ]", getValStr((Config::SHOW_RANK_FOLDER ? "ON" : "OFF"), 18)); 
+    items.emplace_back("[ FOLDER: TYPE ]", getValStr((Config::SHOW_CHART_TYPE_FOLDER ? "ON" : "OFF"), 19));
+    items.emplace_back("[ FOLDER: NOTES ]", getValStr((Config::SHOW_NOTES_RANGE_FOLDER ? "ON" : "OFF"), 20));
+    items.emplace_back("[ FOLDER: ALPHA ]", getValStr((Config::SHOW_ALPHA_FOLDER ? "ON" : "OFF"), 21));
     
-    // Index 20: BACK
+    // Index 22: BACK
     items.emplace_back("[ BACK TO MENU ]", "");
 }
 
@@ -104,7 +108,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                 if (btn == Config::SYS_BTN_DECIDE) {
                     if (cursor == 1) { state = OptionState::WAITING_KEY; configStep = 0; lastConfigTime = currentTime; }
                     else if (cursor == 2) { state = OptionState::WAITING_KEY; configStep = 11; lastConfigTime = currentTime; }
-                    else if ((cursor >= 4 && cursor <= 12) || (cursor >= 14 && cursor <= 19)) { state = OptionState::ADJUSTING_VALUE; updateItemList(); }
+                    else if ((cursor >= 4 && cursor <= 14) || (cursor >= 16 && cursor <= 21)) { state = OptionState::ADJUSTING_VALUE; updateItemList(); }
                     else if (cursor == (int)items.size() - 1) { Config::save(); return OptionState::FINISHED; }
                 }
                 if (btn == Config::SYS_BTN_BACK) { Config::save(); return OptionState::FINISHED; }
@@ -162,7 +166,27 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
                 }
-                else if (cursor == 11) { // BOMB DURATION
+                else if (cursor == 10) { // JUDGE OFFSET
+                    int& targetVar = Config::JUDGE_OFFSET;
+                    if (btn == Config::SYS_BTN_UP) targetVar += 5;
+                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 5;
+                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 1;
+                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 1;
+                    else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
+                    else changed = false;
+                    targetVar = std::clamp(targetVar, -200, 200);
+                }
+                else if (cursor == 11) { // VISUAL OFFSET
+                    int& targetVar = Config::VISUAL_OFFSET;
+                    if (btn == Config::SYS_BTN_UP) targetVar += 5;
+                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 5;
+                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 1;
+                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 1;
+                    else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
+                    else changed = false;
+                    targetVar = std::clamp(targetVar, -200, 200);
+                }
+                else if (cursor == 13) { // BOMB DURATION
                     int& targetVar = Config::BOMB_DURATION_MS;
                     if (btn == Config::SYS_BTN_UP) targetVar += 50;
                     else if (btn == Config::SYS_BTN_DOWN) targetVar -= 50;
@@ -173,7 +197,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     if (targetVar < 50) targetVar = 50;
                     if (targetVar > 1000) targetVar = 1000;
                 }
-                else if (cursor == 12) { // BOMB SIZE
+                else if (cursor == 14) { // BOMB SIZE
                     int& targetVar = Config::BOMB_SIZE_FACTOR;
                     if (btn == Config::SYS_BTN_UP) targetVar += 50;
                     else if (btn == Config::SYS_BTN_DOWN) targetVar -= 50;
@@ -184,14 +208,14 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     if (targetVar < 100) targetVar = 100;
                     if (targetVar > 2000) targetVar = 2000;
                 }
-                else if (cursor >= 14 && cursor <= 19) { // FOLDERS
+                else if (cursor >= 16 && cursor <= 21) { // FOLDERS
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN) {
-                        if (cursor == 14) Config::SHOW_LEVEL_FOLDER = !Config::SHOW_LEVEL_FOLDER;
-                        else if (cursor == 15) Config::SHOW_LAMP_FOLDER = !Config::SHOW_LAMP_FOLDER;
-                        else if (cursor == 16) Config::SHOW_RANK_FOLDER = !Config::SHOW_RANK_FOLDER;
-                        else if (cursor == 17) Config::SHOW_CHART_TYPE_FOLDER = !Config::SHOW_CHART_TYPE_FOLDER;
-                        else if (cursor == 18) Config::SHOW_NOTES_RANGE_FOLDER = !Config::SHOW_NOTES_RANGE_FOLDER;
-                        else if (cursor == 19) Config::SHOW_ALPHA_FOLDER = !Config::SHOW_ALPHA_FOLDER;
+                        if (cursor == 16) Config::SHOW_LEVEL_FOLDER = !Config::SHOW_LEVEL_FOLDER;
+                        else if (cursor == 17) Config::SHOW_LAMP_FOLDER = !Config::SHOW_LAMP_FOLDER;
+                        else if (cursor == 18) Config::SHOW_RANK_FOLDER = !Config::SHOW_RANK_FOLDER;
+                        else if (cursor == 19) Config::SHOW_CHART_TYPE_FOLDER = !Config::SHOW_CHART_TYPE_FOLDER;
+                        else if (cursor == 20) Config::SHOW_NOTES_RANGE_FOLDER = !Config::SHOW_NOTES_RANGE_FOLDER;
+                        else if (cursor == 21) Config::SHOW_ALPHA_FOLDER = !Config::SHOW_ALPHA_FOLDER;
                     }
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
@@ -222,8 +246,8 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
         }
         if (state == OptionState::ADJUSTING_VALUE) {
             renderer.drawText(ren, "ADJUSTING: PRESS DECIDE TO CONFIRM", 640, 620, {255, 255, 0, 255}, true, true);
-            renderer.drawText(ren, (cursor == 4 || cursor == 5 || cursor == 11 || cursor == 12 ? "SYS-UP/DOWN: +-10  SYS-L/R: +-1" : "SYS-UDLR TO SWITCH TYPE"), 640, 670, {120, 120, 120, 255}, true, true);
-        } else if ((cursor >= 4 && cursor <= 12) || (cursor >= 14 && cursor <= 19)) {
+            renderer.drawText(ren, (cursor == 4 || cursor == 5 || cursor == 10 || cursor == 11 || cursor == 13 || cursor == 14 ? "SYS-UP/DOWN: +-5  SYS-L/R: +-1" : "SYS-UDLR TO SWITCH TYPE"), 640, 670, {120, 120, 120, 255}, true, true);
+        } else if ((cursor >= 4 && cursor <= 14) || (cursor >= 16 && cursor <= 21)) {
             renderer.drawText(ren, "PRESS DECIDE TO ADJUST", 640, 670, {150, 150, 150, 255}, true, true);
         }
     } 
