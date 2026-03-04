@@ -30,6 +30,8 @@ bool ScenePlay::isAutoLane(int lane) {
                     Config::ASSIST_OPTION == 5 || Config::ASSIST_OPTION == 6);
     bool auto5k = (Config::ASSIST_OPTION == 3 || Config::ASSIST_OPTION == 5 || 
                     Config::ASSIST_OPTION == 6);
+    // EX: SCR ONLY = 7鍵盤をすべてオートにしてスクラッチのみプレイ
+    if (Config::EX_OPTION == 2 && lane != 8) return true;
     if (lane == 8 && autoScr) return true;
     if ((lane == 6 || lane == 7) && auto5k) return true;
     return false;
@@ -433,11 +435,42 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     return true;
 }
 
+// --- キーボード → 仮想ジョイスティックボタン変換 (Mac/PC用) ---
+static int keyToJoyButton(SDL_Keycode key) {
+    // プレイキー: z=lane1, s=lane2, x=lane3, d=lane4, c=lane5, f=lane6, v=lane7
+    // g=scratch_up, b=scratch_down, a=start, e=effect
+    switch (key) {
+        case SDLK_z: return Config::BTN_LANE1;
+        case SDLK_s: return Config::BTN_LANE2;
+        case SDLK_x: return Config::BTN_LANE3;
+        case SDLK_d: return Config::BTN_LANE4;
+        case SDLK_c: return Config::BTN_LANE5;
+        case SDLK_f: return Config::BTN_LANE6;
+        case SDLK_v: return Config::BTN_LANE7;
+        case SDLK_g: return Config::BTN_LANE8_A;   // scratch up
+        case SDLK_b: return Config::BTN_LANE8_B;   // scratch down
+        case SDLK_a: return Config::BTN_EXIT;       // start
+        case SDLK_e: return Config::BTN_EFFECT;     // effect
+        default:     return -1;
+    }
+}
+
 // --- 入力処理 ---
 bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, PlayEngine& engine) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT) return false;
+
+        // ★Mac/PC: キーボードをジョイスティックイベントに変換して以降の処理に流す
+        if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
+            if (ev.key.repeat) continue; // キーリピートは無視
+            int btn = keyToJoyButton(ev.key.keysym.sym);
+            if (btn < 0) continue;
+            ev.type        = (ev.type == SDL_KEYDOWN) ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
+            ev.jbutton.button    = (Uint8)btn;
+            ev.jbutton.timestamp = ev.key.timestamp;
+            // fall through → 下のJOYBUTTON処理へ
+        }
 
         if (ev.type == SDL_JOYBUTTONDOWN || ev.type == SDL_JOYBUTTONUP) {
             bool isDown = (ev.type == SDL_JOYBUTTONDOWN);
@@ -603,7 +636,7 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
             }
             // ★新規: FAST/SLOW 表示 (NoteRenderer に実装)
             if (judge.isFast || judge.isSlow) {
-                renderer.renderFastSlow(ren, judge.isFast, judge.isSlow, p_raw);
+                renderer.renderFastSlow(ren, judge.isFast, judge.isSlow, p_raw, judge.diffMs);
             }
         }
     }

@@ -4,8 +4,12 @@
 #include <SDL2/SDL_image.h>
 
 void SceneResult::run(SDL_Renderer* ren, NoteRenderer& renderer, const PlayStatus& status, const BMSHeader& header) {
-    ScoreManager::saveIfBest(header.title, header.chartName, (int)header.total, status);
-    BestScore best = ScoreManager::loadScore(header.title, header.chartName, (int)header.total);
+    // EXオプション使用時はスコア・ランプ一切記録しない
+    BestScore best;
+    if (Config::EX_OPTION == 0) {
+        ScoreManager::saveIfBest(header.title, header.chartName, (int)header.total, status);
+        best = ScoreManager::loadScore(header.title, header.chartName, (int)header.total);
+    }
 
     bool backToSelect = false;
     SDL_Event e;
@@ -135,3 +139,4 @@ std::string SceneResult::calculateRank(const PlayStatus& status) {
     if (ratio >= 2.0/9.0) return "E";
     return "F";
 }
+

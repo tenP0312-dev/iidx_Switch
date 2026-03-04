@@ -76,6 +76,113 @@ void PlayEngine::init(BMSData& data) {
         return a.originalLane < b.originalLane;
     });
 
+    // ── MORE NOTES: BGMノーツを単発ノーツとしてプレイレーンに追加 ──────────
+    // EX_OPTION==3 のとき、BGM単発ノーツをランダムレーンに移動して追加する。
+    // LNはスキップ。追加数はMORE_NOTES_COUNTまで（BGM数でキャップ、上限なし）。
+    // 縦連回避: 同一y + 近接y(半拍=240y以内)に同レーン禁止。制約過多時は縦連制約のみ緩和。
+    // LN占有区間回避: 既存プレイLN押下中のレーンを避ける。
+    // この処理はランダムオプション適用前に行い、後でS-RANDOM等が適用される。
+    if (Config::EX_OPTION == 3 && Config::MORE_NOTES_COUNT > 0) {
+        // 1. BGM単発ノーツを収集
+        std::vector<size_t> bgmCandidates;
+        bgmCandidates.reserve(512);
+        for (size_t i = 0; i < tempNotes.size(); ++i) {
+            if (tempNotes[i].isBGM && tempNotes[i].l == 0)
+                bgmCandidates.push_back(i);
+        }
+
+        // 2. 既存プレイLNの占有区間を収集: lane -> list of (start_y, end_y)
+        std::unordered_map<int, std::vector<std::pair<int64_t,int64_t>>> lnOccupied;
+        for (const auto& tn : tempNotes) {
+            if (!tn.isBGM && tn.l > 0 && tn.originalLane >= 1 && tn.originalLane <= 7) {
+                lnOccupied[tn.originalLane].emplace_back(tn.y, tn.y + tn.l);
+            }
+        }
+
+        // 3. 追加ノーツを生成（上限なし: BGM実数でのみキャップ）
+        int addCount = std::min((int)bgmCandidates.size(), Config::MORE_NOTES_COUNT);
+        if ((int)bgmCandidates.size() > addCount) {
+            std::shuffle(bgmCandidates.begin(), bgmCandidates.end(), g);
+            bgmCandidates.resize(addCount);
+        }
+
+        // y座標でソートして処理
+        std::sort(bgmCandidates.begin(), bgmCandidates.end(), [&](size_t a, size_t b){
+            return tempNotes[a].y < tempNotes[b].y;
+        });
+
+        // 縦連回避: 各レーンが最後に使用されたy座標を記録（既存+追加ノーツ両方）
+        // 半拍(240y)以内の同レーン配置を禁止する
+        const int64_t ANTI_CONSEC_Y = 240;
+        int64_t lastUsedY[9];
+        for (int i = 0; i < 9; i++) lastUsedY[i] = -99999;
+
+        // 既存プレイノーツのy座標を近接履歴に登録
+        for (const auto& tn : tempNotes) {
+            if (!tn.isBGM && tn.originalLane >= 1 && tn.originalLane <= 7) {
+                if (tn.y > lastUsedY[tn.originalLane])
+                    lastUsedY[tn.originalLane] = tn.y;
+            }
+        }
+
+        // 同一yの既存プレイノーツを事前マスク登録
+        std::unordered_map<int64_t, uint8_t> moreUsedMask;
+        for (const auto& tn : tempNotes) {
+            if (!tn.isBGM && tn.originalLane >= 1 && tn.originalLane <= 7)
+                moreUsedMask[tn.y] |= (1u << tn.originalLane);
+        }
+
+        auto checkLnBlocked = [&](int lane, int64_t y) -> bool {
+            auto it = lnOccupied.find(lane);
+            if (it == lnOccupied.end()) return false;
+            for (const auto& seg : it->second) {
+                if (y > seg.first && y < seg.second) return true;
+            }
+            return false;
+        };
+
+        for (size_t idx : bgmCandidates) {
+            const TempNote& src = tempNotes[idx];
+            int64_t y = src.y;
+            uint8_t& ymask = moreUsedMask[y];
+
+            std::vector<int> lanes = {1, 2, 3, 4, 5, 6, 7};
+            std::shuffle(lanes.begin(), lanes.end(), g);
+
+            int chosen = -1;
+            // パス1: 縦連回避 + LN回避の両方を満たすレーン
+            for (int lane : lanes) {
+                if (ymask & (1u << lane)) continue;
+                if (std::abs(y - lastUsedY[lane]) < ANTI_CONSEC_Y) continue;
+                if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
+            }
+            // パス2: 縦連制約を緩めてLN回避のみ（混みあったセクション用）
+            if (chosen < 0) {
+                std::shuffle(lanes.begin(), lanes.end(), g);
+                for (int lane : lanes) {
+                    if (ymask & (1u << lane)) continue;
+                    if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
+                }
+            }
+            if (chosen < 0) continue; // 全レーンLN占有ならスキップ
+
+            ymask |= (1u << chosen);
+            lastUsedY[chosen] = y;
+
+            TempNote added = src;
+            added.isBGM        = false;
+            added.originalLane = chosen;
+            tempNotes.push_back(added);
+        }
+
+        // 追加後に再ソート
+        std::sort(tempNotes.begin(), tempNotes.end(), [](const TempNote& a, const TempNote& b) {
+            if (a.y != b.y) return a.y < b.y;
+            return a.originalLane < b.originalLane;
+        });
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     // ★修正: std::map<int64_t, std::set<int>> を廃止。
     //        旧実装は S-RANDOM 時に全ノーツ分の map ノード + set ノードを動的確保していた。
     //        2000ノーツで数千回の new/delete が発生し、init 時間が数百ms 増加していた。
@@ -354,6 +461,7 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, SoundManager& 
             currentJudge.active    = true;
             currentJudge.isFast    = isFast;
             currentJudge.isSlow    = isSlow;
+            currentJudge.diffMs    = raw_diff;
             if (status.combo > status.maxCombo) status.maxCombo = status.combo;
             judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
         }
@@ -437,6 +545,7 @@ void PlayEngine::processRelease(int lane, double cur_ms, uint32_t now) {
             currentJudge.active    = true;
             currentJudge.isFast    = isFast;
             currentJudge.isSlow    = isSlow;
+            currentJudge.diffMs    = raw_diff;
 
             if (status.combo > status.maxCombo) status.maxCombo = status.combo;
             judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
@@ -469,6 +578,9 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+
+
 
 
 

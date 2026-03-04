@@ -109,7 +109,7 @@ public:
     void renderBombs(SDL_Renderer* ren,
                      BombAnim* buf, size_t& count,
                      uint32_t now);
-    void renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress);
+    void renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress, double diffMs = 0.0);
 
     void renderGauge(SDL_Renderer* ren, double gaugeValue,
                      int gaugeOption, bool isFailed);
@@ -177,6 +177,7 @@ private:
 };
 
 #endif // NOTERENDERER_HPP
+
 
 
 

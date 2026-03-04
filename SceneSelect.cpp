@@ -284,6 +284,28 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         if (e.type == SDL_QUIT) { quit = true; return ""; }
+
+        // ★Mac/PC: キーボード → SYS_BTNに変換
+        if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+            int btn = -1;
+            switch (e.key.keysym.sym) {
+                case SDLK_UP:     btn = Config::SYS_BTN_UP;     break;
+                case SDLK_DOWN:   btn = Config::SYS_BTN_DOWN;   break;
+                case SDLK_LEFT:   btn = Config::SYS_BTN_LEFT;   break;
+                case SDLK_RIGHT:  btn = Config::SYS_BTN_RIGHT;  break;
+                case SDLK_RETURN: btn = Config::SYS_BTN_DECIDE; break;
+                case SDLK_ESCAPE: btn = Config::SYS_BTN_BACK;   break;
+                case SDLK_TAB:    btn = Config::SYS_BTN_DIFF;   break;
+                case SDLK_F1:     btn = Config::SYS_BTN_OPTION; break;
+                case SDLK_r:      btn = Config::SYS_BTN_RANDOM; break;
+                case SDLK_q:      btn = Config::SYS_BTN_SORT;   break;
+                default: break;
+            }
+            if (btn >= 0) {
+                e.type = SDL_JOYBUTTONDOWN;
+                e.jbutton.button = (Uint8)btn;
+            }
+        }
         
         if (e.type == SDL_JOYBUTTONDOWN || e.type == SDL_JOYBUTTONUP) {
             bool isDown = (e.type == SDL_JOYBUTTONDOWN);
@@ -446,13 +468,13 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
                     if (optionCategoryIndex == 0) Config::PLAY_OPTION = (Config::PLAY_OPTION + 4) % 5;
                     else if (optionCategoryIndex == 1) Config::GAUGE_OPTION = (Config::GAUGE_OPTION + 6) % 7;
                     else if (optionCategoryIndex == 2) Config::ASSIST_OPTION = (Config::ASSIST_OPTION + 7) % 8;
-                    else if (optionCategoryIndex == 3) Config::RANGE_OPTION = (Config::RANGE_OPTION + 5) % 6;
+                    else if (optionCategoryIndex == 3) Config::EX_OPTION = (Config::EX_OPTION + 4) % 5;
                 }
                 if (btn == Config::SYS_BTN_DOWN) {
                     if (optionCategoryIndex == 0) Config::PLAY_OPTION = (Config::PLAY_OPTION + 1) % 5;
                     else if (optionCategoryIndex == 1) Config::GAUGE_OPTION = (Config::GAUGE_OPTION + 1) % 7;
                     else if (optionCategoryIndex == 2) Config::ASSIST_OPTION = (Config::ASSIST_OPTION + 1) % 8;
-                    else if (optionCategoryIndex == 3) Config::RANGE_OPTION = (Config::RANGE_OPTION + 1) % 6;
+                    else if (optionCategoryIndex == 3) Config::EX_OPTION = (Config::EX_OPTION + 1) % 5;
                 }
                 double currentBPM = 150.0;
                 if (!songGroups.empty() && !songGroups[selectedIndex].isFolder) {
@@ -477,7 +499,7 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
                 }
                 else if (detailOptionIndex == 1) {
                     if (btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN || btn == Config::SYS_BTN_DECIDE) {
-                        Config::SHOW_FAST_SLOW = !Config::SHOW_FAST_SLOW;
+                        Config::SHOW_FAST_SLOW = (Config::SHOW_FAST_SLOW + 1) % 3; // 0=OFF→1=ON→2=DETAIL→0
                     }
                 }
                 else if (detailOptionIndex == 2) {
@@ -610,6 +632,9 @@ bool SceneSelect::isOneMoreFolderSelected() const {
 
 void SceneSelect::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& renderer) {}
 void SceneSelect::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer) {}
+
+
+
 
 
 

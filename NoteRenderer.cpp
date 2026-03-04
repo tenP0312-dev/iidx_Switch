@@ -306,6 +306,11 @@ void NoteRenderer::renderUI(SDL_Renderer* ren, const BMSHeader& header, int fps,
         SDL_Rect dst = { centerX - texNameplate.w / 2, 0, texNameplate.w, texNameplate.h };
         SDL_RenderCopy(ren, texNameplate.texture, NULL, &dst);
     }
+    // ネームプレート上に楽曲名・アーティスト名を小フォントで中央揃え表示
+    SDL_Color white  = {255, 255, 255, 255};
+    SDL_Color dimmed = {180, 180, 180, 255};
+    drawTextCached(ren, header.title,  centerX, 8,  white,  false, true);
+    drawTextCached(ren, header.artist, centerX, 36, dimmed, false, true);
 }
 
 // スクラッチ回転アニメーション用状態（ファイルスコープで慣性を保持）
@@ -454,18 +459,14 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
 
             // ★修正: オートレーンのLNボディ・終端も半透明化
             if (dHY > dTY && body && *body) {
-                if (isAuto) SDL_SetTextureAlphaMod(body->texture, 160);
                 SDL_Rect r = { x + 4, dTY, w - 8, dHY - dTY };
                 SDL_RenderCopy(ren, body->texture, NULL, &r);
-                if (isAuto) SDL_SetTextureAlphaMod(body->texture, 255);
             }
             if (tailY >= (int)Config::SUDDEN_PLUS && tailY <= judgeY) {
                 const TextureRegion* end = (lnE && *lnE) ? lnE : target;
                 if (end && *end) {
-                    if (isAuto) SDL_SetTextureAlphaMod(end->texture, 160);
                     SDL_Rect r = { x + 2, tailY - end->h, w - 4, end->h };
                     SDL_RenderCopy(ren, end->texture, NULL, &r);
-                    if (isAuto) SDL_SetTextureAlphaMod(end->texture, 255);
                 }
             }
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
@@ -476,9 +477,7 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
         const TextureRegion* head = (note.isLN && lnS && *lnS) ? lnS : target;
         if (head && *head) {
             SDL_Rect r = { x + 2, headY - head->h, w - 4, head->h };
-            if (isAuto) SDL_SetTextureAlphaMod(head->texture, 160);
             SDL_RenderCopy(ren, head->texture, NULL, &r);
-            if (isAuto) SDL_SetTextureAlphaMod(head->texture, 255);
         }
     }
 }
@@ -579,21 +578,28 @@ void NoteRenderer::renderBombs(SDL_Renderer* ren,
 //  isFast/isSlow は JudgmentDisplay のフラグから渡す
 //  progress: 0.0 (表示開始) → 1.0 (完全透明)
 // ================================================================
-void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress) {
-    // ★修正: SHOW_FAST_SLOW = false の時は描画しない（0 = OFF）
-    if (!Config::SHOW_FAST_SLOW) return;
+void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress, double diffMs) {
+    if (Config::SHOW_FAST_SLOW == 0) return;
     if (!isFast && !isSlow) return;
     Uint8 alpha = (Uint8)(255 * (1.0f - std::min(1.0f, progress)));
     int judgeY  = Config::JUDGMENT_LINE_Y - Config::LIFT;
     int x       = ll.baseX + ll.totalWidth / 2;
-    int y       = judgeY - 60;  // 判定ライン上 60px
+    // 判定文字の高さ基準: renderJudgment は judgeY-50 あたりに描画するので
+    // FAST/SLOWはその上20px = judgeY - 90
+    int y       = judgeY - 90;
 
-    const char* text  = isFast ? "FAST" : "SLOW";
-    // FAST = 水色、SLOW = 橙色
     SDL_Color color = isFast ? SDL_Color{0, 200, 255, alpha}
-                             : SDL_Color{255, 140, 0, alpha};
-    // alpha が変化するため drawText (非キャッシュ) を使う
-    drawText(ren, text, x, y, color, false, true);
+                             : SDL_Color{255, 140, 0,   alpha};
+
+    if (Config::SHOW_FAST_SLOW == 2) {
+        // DETAIL: "FAST +12.3ms" / "SLOW -8.1ms" 形式
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%s %+.1fms", isFast ? "FAST" : "SLOW", diffMs);
+        drawText(ren, buf, x, y, color, false, true);
+    } else {
+        // ON: 通常表示
+        drawText(ren, isFast ? "FAST" : "SLOW", x, y, color, false, true);
+    }
 }
 
 
@@ -797,6 +803,8 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
+
 
 
 

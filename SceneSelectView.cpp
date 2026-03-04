@@ -187,7 +187,7 @@ void SceneSelectView::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& rende
         {"STYLE", {255, 140, 0, 255}, {"OFF", "RANDOM", "R-RANDOM", "S-RANDOM", "MIRROR"}, Config::PLAY_OPTION, "LEFT / RIGHT"},
         {"GAUGE", {50, 205, 50, 255}, {"OFF", "A-EASY", "EASY", "HARD", "EX-HARD", "DAN", "HAZARD"}, Config::GAUGE_OPTION, "UP / DOWN"},
         {"ASSIST", {147, 112, 219, 255}, {"OFF", "AUTO SCR", "LEGACY", "5KEYS", "ASCR+LEG", "ASCR+5K", "FULL ASST", "AUTO PLAY"}, Config::ASSIST_OPTION, "LEVEL BUTTON"},
-        {"RANGE", {0, 191, 255, 255}, {"OFF", "SUDDEN+", "HIDDEN+", "SUD+&HID+", "LIFT", "LIFT&SUD+"}, Config::RANGE_OPTION, "TO DETAIL"}
+        {"EX", {0, 191, 255, 255}, {"OFF", "ALL SCR", "SCR ONLY", "MORE NOTES", "タピオカウメェス"}, Config::EX_OPTION, "TO DETAIL"}
     };
 
     int panelW = 260, panelH = 500, startX = 100, startY = 110;
@@ -295,9 +295,9 @@ void SceneSelectView::renderDetailOptionOverlay(SDL_Renderer* ren, NoteRenderer&
             SDL_RenderFillRect(ren, &knob);
             renderer.drawText(ren, valStr, sliderCenterX, startY + 360, {255, 255, 255, 255}, true, true, false, "");
         } else {
-            const char* labels[] = {"OFF", "ON"};
-            int selection = Config::SHOW_FAST_SLOW ? 1 : 0;
-            for (int j = 0; j < 2; j++) {
+            const char* labels[] = {"OFF", "ON", "DETAIL"};
+            int selection = std::clamp(Config::SHOW_FAST_SLOW, 0, 2);
+            for (int j = 0; j < 3; j++) {
                 int itemY = startY + 50 + (j * 42); 
                 SDL_Rect itemR = { x + 10, itemY, panelW - 20, 35 };
                 if (j == selection) {
@@ -334,6 +334,8 @@ void SceneSelectView::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer
     renderer.drawText(ren, "SCRATCH: SELECT YES/NO | LEVEL BUTTON: BACK TO MODE SELECT", 640, 540, {200,200,200,255}, false, true, false, "");
     renderer.drawText(ren, "PRESS DECIDE KEY TO CONFIRM", 640, 580, {255,255,255,255}, false, true, false, "");
 }
+
+
 
 
 

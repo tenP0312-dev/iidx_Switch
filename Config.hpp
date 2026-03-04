@@ -33,8 +33,9 @@ namespace Config {
     inline int GAUGE_OPTION = 0;
     // 3. ASSIST
     inline int ASSIST_OPTION = 0;
-    // 4. RANGE
-    inline int RANGE_OPTION = 0;
+    // 4. EX OPTION
+    inline int EX_OPTION = 0; // 0=OFF 1=ALL SCRATCH 2=SCR ONLY 3=MORE NOTES 4=タピオカウメェス
+    inline int MORE_NOTES_COUNT = 50; // MORE NOTES: 追加するノーツ数 (0-200, 10刻み)
 
     // --- ゲージ表示設定 ---
     inline int GAUGE_DISPLAY_TYPE = 1;
@@ -44,7 +45,7 @@ namespace Config {
     // --- 【追加】判定設定 ---
     inline int JUDGE_OFFSET = 0;  // 判定オフセット(ms): 正の値で判定が遅くなる
     inline int VISUAL_OFFSET = 0; // 表示オフセット(px): ノーツの見た目位置だけをずらす。JUDGE_OFFSETと独立。
-    inline bool SHOW_FAST_SLOW = true; // 【追加】FAST/SLOW表示切り替えフラグ
+    inline int SHOW_FAST_SLOW = 1; // FAST/SLOW表示: 0=OFF, 1=ON, 2=DETAIL(ms表示)
 
     // --- ボム演出設定 ---
     inline int BOMB_DURATION_MS = 300; // ボム1発の表示時間(ms) 50〜1000
@@ -67,9 +68,15 @@ namespace Config {
     inline bool SHOW_ALPHA_FOLDER = true;
 
     // --- パス設定 ---
+#ifdef __SWITCH__
     inline std::string ROOT_PATH = "sdmc:/switch/bmsplayer/";
+#elif defined(__APPLE__)
+    inline std::string ROOT_PATH = "./";   // Mac: 実行ファイルと同じフォルダ
+#else
+    inline std::string ROOT_PATH = "./";   // Linux/Windows
+#endif
     inline std::string BMS_PATH = ROOT_PATH + "BMS";
-    inline std::string FONT_PATH = ROOT_PATH + "font.ttf";
+    inline std::string FONT_PATH = ROOT_PATH + "font.ttc";
     inline std::string SCORE_PATH = ROOT_PATH + "scores/";
 
     // --- 判定幅の設定 (ms) ---
@@ -132,12 +139,13 @@ namespace Config {
                 else if (key == "PLAY_OPTION") PLAY_OPTION = std::stoi(val);
                 else if (key == "GAUGE_OPTION") GAUGE_OPTION = std::stoi(val);
                 else if (key == "ASSIST_OPTION") ASSIST_OPTION = std::stoi(val);
-                else if (key == "RANGE_OPTION") RANGE_OPTION = std::stoi(val);
+                else if (key == "EX_OPTION") EX_OPTION = std::stoi(val);
+                else if (key == "MORE_NOTES_COUNT") MORE_NOTES_COUNT = std::stoi(val);
                 else if (key == "GAUGE_DISPLAY_TYPE") GAUGE_DISPLAY_TYPE = std::stoi(val);
                 else if (key == "DAN_GAUGE_START_PERCENT") DAN_GAUGE_START_PERCENT = std::stoi(val); 
                 else if (key == "JUDGE_OFFSET") JUDGE_OFFSET = std::stoi(val);
                 else if (key == "VISUAL_OFFSET") VISUAL_OFFSET = std::stoi(val);
-                else if (key == "SHOW_FAST_SLOW") SHOW_FAST_SLOW = (std::stoi(val) != 0); 
+                else if (key == "SHOW_FAST_SLOW") SHOW_FAST_SLOW = std::stoi(val);
                 else if (key == "BOMB_DURATION_MS") BOMB_DURATION_MS = std::stoi(val);
                 else if (key == "BOMB_SIZE_FACTOR") BOMB_SIZE_FACTOR = std::stoi(val);
                 else if (key == "START_UP_OPTION") START_UP_OPTION = std::stoi(val);
@@ -200,12 +208,13 @@ namespace Config {
         file << "PLAY_OPTION=" << PLAY_OPTION << "\n";
         file << "GAUGE_OPTION=" << GAUGE_OPTION << "\n";
         file << "ASSIST_OPTION=" << ASSIST_OPTION << "\n";
-        file << "RANGE_OPTION=" << RANGE_OPTION << "\n";
+        file << "EX_OPTION=" << EX_OPTION << "\n";
+        file << "MORE_NOTES_COUNT=" << MORE_NOTES_COUNT << "\n";
         file << "GAUGE_DISPLAY_TYPE=" << GAUGE_DISPLAY_TYPE << "\n";
         file << "DAN_GAUGE_START_PERCENT=" << DAN_GAUGE_START_PERCENT << "\n"; 
         file << "JUDGE_OFFSET=" << JUDGE_OFFSET << "\n";
         file << "VISUAL_OFFSET=" << VISUAL_OFFSET << "\n";
-        file << "SHOW_FAST_SLOW=" << (SHOW_FAST_SLOW ? 1 : 0) << "\n";
+        file << "SHOW_FAST_SLOW=" << SHOW_FAST_SLOW << "\n";
         file << "BOMB_DURATION_MS=" << BOMB_DURATION_MS << "\n";
         file << "BOMB_SIZE_FACTOR=" << BOMB_SIZE_FACTOR << "\n";
         file << "START_UP_OPTION=" << START_UP_OPTION << "\n";
@@ -245,6 +254,9 @@ namespace Config {
     }
 }
 #endif
+
+
+
 
 
 

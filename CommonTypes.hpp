@@ -76,6 +76,7 @@ struct JudgmentDisplay {
     bool      active  = false;
     bool      isFast  = false;
     bool      isSlow  = false;
+    double    diffMs  = 0.0; // pgreatからの誤差ms (DETAIL表示用)
 
     // 後方互換ヘルパー：描画側でテキストが必要なときに呼ぶ
     const char*  text()  const { return judgeKindToText(kind); }
@@ -187,6 +188,7 @@ struct VideoFrame {
 };
 
 #endif // COMMONTYPES_HPP
+
 
 
 
