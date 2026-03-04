@@ -213,7 +213,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else if (btn == Config::SYS_BTN_DOWN) targetVar -= 10;
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
-                    targetVar = std::clamp(targetVar, 0, 200);
+                    if (targetVar < 0) targetVar = 0;
                 }
                 else if (cursor == 14) { // BOMB DURATION
                     int& targetVar = Config::BOMB_DURATION_MS;
@@ -373,6 +373,7 @@ void SceneOption::handleKeyConfig(int btn) {
         updateItemList();
     }
 }
+
 
 
 

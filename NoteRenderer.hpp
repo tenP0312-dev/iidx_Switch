@@ -152,6 +152,9 @@ private:
     TextureRegion texNoteWhite_LNS, texNoteWhite_LNE;
     TextureRegion texNoteBlue_LNS,  texNoteBlue_LNE;
     TextureRegion texNoteRed_LNS,   texNoteRed_LNE;
+
+    // BSS (Back Spin Scratch) 専用テクスチャ: 始点・中間ボディ・終点
+    TextureRegion texNoteRed_BSS_S, texNoteRed_BSS_Mid, texNoteRed_BSS_E;
     TextureRegion texKeybeamWhite, texKeybeamBlue, texKeybeamRed;
     TextureRegion texJudgeAtlas, texNumberAtlas;
     std::vector<TextureRegion> texBombs;
@@ -177,6 +180,7 @@ private:
 };
 
 #endif // NOTERENDERER_HPP
+
 
 
 

@@ -78,8 +78,8 @@ void PlayEngine::init(BMSData& data) {
 
     // ── MORE NOTES: BGMノーツを単発ノーツとしてプレイレーンに追加 ──────────
     // EX_OPTION==3 のとき、BGM単発ノーツをランダムレーンに移動して追加する。
-    // LNはスキップ。追加数はMORE_NOTES_COUNTまで（BGM数でキャップ、上限なし）。
-    // 縦連回避: 同一y + 近接y(半拍=240y以内)に同レーン禁止。制約過多時は縦連制約のみ緩和。
+    // LNはスキップ。追加数はMORE_NOTES_COUNTまで（BGM実数でのみキャップ、上限なし）。
+    // 縦連回避: 既存ノーツとのy距離をlower_boundで正確に計算。3パスで制約を段階的に緩和。
     // LN占有区間回避: 既存プレイLN押下中のレーンを避ける。
     // この処理はランダムオプション適用前に行い、後でS-RANDOM等が適用される。
     if (Config::EX_OPTION == 3 && Config::MORE_NOTES_COUNT > 0) {
@@ -91,7 +91,7 @@ void PlayEngine::init(BMSData& data) {
                 bgmCandidates.push_back(i);
         }
 
-        // 2. 既存プレイLNの占有区間を収集: lane -> list of (start_y, end_y)
+        // 2. 既存プレイLNの占有区間を収集
         std::unordered_map<int, std::vector<std::pair<int64_t,int64_t>>> lnOccupied;
         for (const auto& tn : tempNotes) {
             if (!tn.isBGM && tn.l > 0 && tn.originalLane >= 1 && tn.originalLane <= 7) {
@@ -111,19 +111,20 @@ void PlayEngine::init(BMSData& data) {
             return tempNotes[a].y < tempNotes[b].y;
         });
 
-        // 縦連回避: 各レーンが最後に使用されたy座標を記録（既存+追加ノーツ両方）
-        // 半拍(240y)以内の同レーン配置を禁止する
-        const int64_t ANTI_CONSEC_Y = 240;
-        int64_t lastUsedY[9];
-        for (int i = 0; i < 9; i++) lastUsedY[i] = -99999;
-
-        // 既存プレイノーツのy座標を近接履歴に登録
+        // 縦連回避: 各レーンの既存ノーツy座標をソート済みリストで保持
+        // lower_boundで「直前の既存ノーツy」を O(logN) で取得する
+        const int64_t ANTI_CONSEC_Y = 300; // 約4分音符3/8。狭くすると全パス2に落ちるので少し広め
+        std::vector<int64_t> existingY[9]; // lane 1-7
         for (const auto& tn : tempNotes) {
-            if (!tn.isBGM && tn.originalLane >= 1 && tn.originalLane <= 7) {
-                if (tn.y > lastUsedY[tn.originalLane])
-                    lastUsedY[tn.originalLane] = tn.y;
-            }
+            if (!tn.isBGM && tn.originalLane >= 1 && tn.originalLane <= 7)
+                existingY[tn.originalLane].push_back(tn.y);
         }
+        for (int i = 1; i <= 7; i++)
+            std::sort(existingY[i].begin(), existingY[i].end());
+
+        // 追加ノーツ処理中の「直前使用y」（追加ノーツ同士の縦連管理用）
+        int64_t lastAddedY[9];
+        for (int i = 0; i < 9; i++) lastAddedY[i] = -999999;
 
         // 同一yの既存プレイノーツを事前マスク登録
         std::unordered_map<int64_t, uint8_t> moreUsedMask;
@@ -141,6 +142,16 @@ void PlayEngine::init(BMSData& data) {
             return false;
         };
 
+        // 既存ノーツから「y未満の直前y」を取得
+        auto getPrevExistY = [&](int lane, int64_t y) -> int64_t {
+            const auto& v = existingY[lane];
+            if (v.empty()) return -999999;
+            auto it = std::lower_bound(v.begin(), v.end(), y);
+            if (it == v.begin()) return -999999;
+            --it;
+            return *it;
+        };
+
         for (size_t idx : bgmCandidates) {
             const TempNote& src = tempNotes[idx];
             int64_t y = src.y;
@@ -150,13 +161,23 @@ void PlayEngine::init(BMSData& data) {
             std::shuffle(lanes.begin(), lanes.end(), g);
 
             int chosen = -1;
-            // パス1: 縦連回避 + LN回避の両方を満たすレーン
+            // パス1: 既存ノーツ+追加ノーツ両方との縦連を回避 + LN回避
             for (int lane : lanes) {
                 if (ymask & (1u << lane)) continue;
-                if (std::abs(y - lastUsedY[lane]) < ANTI_CONSEC_Y) continue;
+                int64_t prevY = std::max(getPrevExistY(lane, y), lastAddedY[lane]);
+                if (y - prevY < ANTI_CONSEC_Y) continue;
                 if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
             }
-            // パス2: 縦連制約を緩めてLN回避のみ（混みあったセクション用）
+            // パス2: 追加ノーツ同士の縦連のみ回避（既存との縦連は許容）
+            if (chosen < 0) {
+                std::shuffle(lanes.begin(), lanes.end(), g);
+                for (int lane : lanes) {
+                    if (ymask & (1u << lane)) continue;
+                    if (y - lastAddedY[lane] < ANTI_CONSEC_Y) continue;
+                    if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
+                }
+            }
+            // パス3: LN回避のみ（縦連制約を完全に緩和）
             if (chosen < 0) {
                 std::shuffle(lanes.begin(), lanes.end(), g);
                 for (int lane : lanes) {
@@ -164,10 +185,10 @@ void PlayEngine::init(BMSData& data) {
                     if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
                 }
             }
-            if (chosen < 0) continue; // 全レーンLN占有ならスキップ
+            if (chosen < 0) continue;
 
             ymask |= (1u << chosen);
-            lastUsedY[chosen] = y;
+            lastAddedY[chosen] = y;
 
             TempNote added = src;
             added.isBGM        = false;
@@ -253,6 +274,40 @@ void PlayEngine::init(BMSData& data) {
     std::sort(notes.begin(), notes.end(), [](const PlayableNote& a, const PlayableNote& b) {
         return a.target_ms < b.target_ms;
     });
+
+    // ── BSS検出 ──────────────────────────────────────────────────────────
+    // スクラッチ(lane==8)のLN終点と次スクラッチノーツの始点が同一yのペアを検出。
+    // 「全てのロングスクラッチの終点には単発ノーツが置かれる」という仕様を考慮し、
+    // LN終点y == 次ノーツy かつ 次ノーツがさらにもう一つ先にも重なっている場合のみBSS。
+    // 具体的には: LN終点に単発が置かれるのは通常仕様→スキップ。
+    //             LN終点y == 次LN始点y の場合がBSS。
+    //             または LN終点y == 単発y かつ その単発の次にも別ノーツが gap=0 で続く場合もBSS。
+    // 判定: lane==8 で (LN終点y == 次ノーツy) かつ 次ノーツもlane==8 であればBSS。
+    {
+        // lane==8のノーツのみ抽出してインデックスを保持
+        std::vector<size_t> scratchIdx;
+        for (size_t i = 0; i < notes.size(); ++i) {
+            if (notes[i].lane == 8 && !notes[i].isBGM)
+                scratchIdx.push_back(i);
+        }
+        // y座標でソート（target_msでソート済みなので通常は既にy順）
+        // 終点y == 次始点y のペアを検出
+        for (size_t k = 0; k + 1 < scratchIdx.size(); ++k) {
+            PlayableNote& cur = notes[scratchIdx[k]];
+            PlayableNote& nxt = notes[scratchIdx[k + 1]];
+            if (!cur.isLN) continue; // LNでなければスキップ
+            int64_t endY = cur.y + cur.l;
+            // BSSの条件:
+            //   1. LN終点y == 次ノーツy（gap=0）
+            //   2. 次ノーツが単発（isLN=false）← 通常LNの終点リリース音はLNなので除外
+            if (std::abs(nxt.y - endY) <= 1 && !nxt.isLN) {
+                cur.isBSS = true;
+                nxt.isBSS = true;
+                cur.bssPartnerY = nxt.y;
+            }
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────
 
     status.remainingNotes = status.totalNotes;
     for (const auto& l : data.lines) beatLines.push_back({projector.getMsFromY(l.y), l.y});
@@ -578,6 +633,9 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+
+
 
 
 

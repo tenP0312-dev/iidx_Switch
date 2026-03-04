@@ -35,7 +35,7 @@ namespace Config {
     inline int ASSIST_OPTION = 0;
     // 4. EX OPTION
     inline int EX_OPTION = 0; // 0=OFF 1=ALL SCRATCH 2=SCR ONLY 3=MORE NOTES 4=タピオカウメェス
-    inline int MORE_NOTES_COUNT = 50; // MORE NOTES: 追加するノーツ数 (0-200, 10刻み)
+    inline int MORE_NOTES_COUNT = 50; // MORE NOTES: 追加するノーツ数 (0以上、上限なし)
 
     // --- ゲージ表示設定 ---
     inline int GAUGE_DISPLAY_TYPE = 1;
@@ -76,7 +76,7 @@ namespace Config {
     inline std::string ROOT_PATH = "./";   // Linux/Windows
 #endif
     inline std::string BMS_PATH = ROOT_PATH + "BMS";
-    inline std::string FONT_PATH = ROOT_PATH + "font.ttc";
+    inline std::string FONT_PATH = ROOT_PATH + "font.ttf";
     inline std::string SCORE_PATH = ROOT_PATH + "scores/";
 
     // --- 判定幅の設定 (ms) ---
@@ -254,6 +254,8 @@ namespace Config {
     }
 }
 #endif
+
+
 
 
 

@@ -559,9 +559,14 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
         }
     }
     if (startButtonPressed && (scratchUpActive || scratchDownActive)) {
-        int delta = scratchUpActive ? -2 : 2; 
-        Config::SUDDEN_PLUS = std::clamp(Config::SUDDEN_PLUS + delta, 0, 1000);
-        if (Config::SUDDEN_PLUS > 0) backupSudden = Config::SUDDEN_PLUS;
+        int delta = scratchUpActive ? -2 : 2;
+        if (Config::SUDDEN_PLUS == 0) {
+            // サドプラなし状態ではリフトを操作
+            Config::LIFT = std::clamp(Config::LIFT + delta, 0, 1000);
+        } else {
+            Config::SUDDEN_PLUS = std::clamp(Config::SUDDEN_PLUS + delta, 0, 1000);
+            if (Config::SUDDEN_PLUS > 0) backupSudden = Config::SUDDEN_PLUS;
+        }
     }
     return true;
 }
