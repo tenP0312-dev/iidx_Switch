@@ -92,9 +92,8 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     loadAndCache(ren, texNoteBlue_LNE,  s + "note_blue_lne.png");
     loadAndCache(ren, texNoteRed_LNS,   s + "note_red_lns.png");
     loadAndCache(ren, texNoteRed_LNE,   s + "note_red_lne.png");
-    loadAndCache(ren, texNoteRed_BSS_S,   s + "note_red_bss_s.png");
-    loadAndCache(ren, texNoteRed_BSS_Mid, s + "note_red_bss_middle.png");
-    loadAndCache(ren, texNoteRed_BSS_E,   s + "note_red_bss_e.png");
+    loadAndCache(ren, texNoteRed_BSS_S, s + "note_red_bss_s.png");
+    loadAndCache(ren, texNoteRed_BSS_E, s + "note_red_bss_e.png");
 
     loadAndCache(ren, texKeybeamWhite, s + "beam_white.png");
     loadAndCache(ren, texKeybeamBlue,  s + "beam_blue.png");
@@ -157,7 +156,7 @@ void NoteRenderer::cleanup() {
     texNoteWhite_LNS.reset(); texNoteWhite_LNE.reset();
     texNoteBlue_LNS.reset();  texNoteBlue_LNE.reset();
     texNoteRed_LNS.reset();   texNoteRed_LNE.reset();
-    texNoteRed_BSS_S.reset(); texNoteRed_BSS_Mid.reset(); texNoteRed_BSS_E.reset();
+    texNoteRed_BSS_S.reset(); texNoteRed_BSS_E.reset();
     texKeybeamWhite.reset(); texKeybeamBlue.reset(); texKeybeamRed.reset();
     texJudgeAtlas.reset(); texNumberAtlas.reset(); texLaneCover.reset();
     texGaugeAssist.reset(); texGaugeNormal.reset(); texGaugeHard.reset();
@@ -435,15 +434,12 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     if (note.isLN && note.isBeingPressed) headY = judgeY - Config::VISUAL_OFFSET;
 
     const TextureRegion *target = nullptr, *lnB = nullptr, *lnA1 = nullptr, *lnA2 = nullptr, *lnS = nullptr, *lnE = nullptr;
-    // BSS middle body: 終点LN側のボディにBSS mid テクスチャを使用
-    const TextureRegion* bssMid = nullptr;
     if (note.lane == 8) {
         target = &texNoteRed; lnB = &texNoteRed_LN;
         lnA1 = &texNoteRed_LN_Active1; lnA2 = &texNoteRed_LN_Active2;
         if (note.isBSS) {
-            lnS    = (texNoteRed_BSS_S)   ? &texNoteRed_BSS_S   : &texNoteRed_LNS;
-            lnE    = (texNoteRed_BSS_E)   ? &texNoteRed_BSS_E   : &texNoteRed_LNE;
-            bssMid = (texNoteRed_BSS_Mid) ? &texNoteRed_BSS_Mid : nullptr;
+            lnS = (texNoteRed_BSS_S) ? &texNoteRed_BSS_S : &texNoteRed_LNS;
+            lnE = (texNoteRed_BSS_E) ? &texNoteRed_BSS_E : &texNoteRed_LNE;
         } else {
             lnS = &texNoteRed_LNS; lnE = &texNoteRed_LNE;
         }
@@ -458,8 +454,6 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     }
 
     if (note.isLN) {
-        // tailY: LN終点のY座標 = note.y + note.l（Yの長さ）
-        // 同じ pixels_per_y で計算するのでBPMに依存しない
         int tailY = judgeY - (int)((note.y + note.l - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
 
         bool shouldDraw = note.isBeingPressed
@@ -467,79 +461,22 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
 
         if (shouldDraw) {
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            const TextureRegion* body = note.isBeingPressed
+                ? ((SDL_GetTicks() / 100 % 2 == 0) ? lnA1 : lnA2)
+                : lnB;
 
-            if (note.isBSS && bssMid && *bssMid && note.bssPartnerY != 0) {
-                // BSS描画: 始点(bss_s) → ボディ → middle(1枚) → ボディ → 終点(bss_e)
-                // bssPartnerY から始点ノーツのheadYを計算
-                int partnerHeadY = judgeY - (int)((note.bssPartnerY - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
+            int dTY = std::max(tailY, (int)Config::SUDDEN_PLUS);
+            int dHY = std::min(headY, judgeY);
 
-                // middleの中心Y = tailYとpartnerHeadYの中間
-                int midH    = bssMid->h;
-                int midCenY = (tailY + partnerHeadY) / 2;
-                int midTopY = midCenY - midH / 2;
-                int midBotY = midCenY + midH / 2;
-
-                const TextureRegion* body = note.isBeingPressed
-                    ? ((SDL_GetTicks() / 100 % 2 == 0) ? lnA1 : lnA2)
-                    : lnB;
-
-                // 下ボディ: tailY〜middleの下端
-                int lo_top = std::max(tailY,    (int)Config::SUDDEN_PLUS);
-                int lo_bot = std::min(midTopY,  judgeY);
-                if (lo_bot > lo_top && body && *body) {
-                    SDL_Rect r = { x + 4, lo_top, w - 8, lo_bot - lo_top };
-                    SDL_RenderCopy(ren, body->texture, NULL, &r);
-                }
-                // middle（1枚そのまま）
-                int mid_top = std::max(midTopY, (int)Config::SUDDEN_PLUS);
-                int mid_bot = std::min(midBotY, judgeY);
-                if (mid_bot > mid_top) {
-                    SDL_Rect src = { 0, mid_top - midTopY, bssMid->w, mid_bot - mid_top };
-                    SDL_Rect dst = { x + 2, mid_top, w - 4, mid_bot - mid_top };
-                    SDL_RenderCopy(ren, bssMid->texture, &src, &dst);
-                }
-                // 上ボディ: middleの上端〜partnerHeadY
-                int hi_top = std::max(midBotY,      (int)Config::SUDDEN_PLUS);
-                int hi_bot = std::min(partnerHeadY, judgeY);
-                if (hi_bot > hi_top && body && *body) {
-                    SDL_Rect r = { x + 4, hi_top, w - 8, hi_bot - hi_top };
-                    SDL_RenderCopy(ren, body->texture, NULL, &r);
-                }
-                // 終点キャップ (bss_e)
-                if (tailY >= (int)Config::SUDDEN_PLUS && tailY <= judgeY) {
-                    const TextureRegion* end = (lnE && *lnE) ? lnE : target;
-                    if (end && *end) {
-                        SDL_Rect r = { x + 2, tailY - end->h, w - 4, end->h };
-                        SDL_RenderCopy(ren, end->texture, NULL, &r);
-                    }
-                }
-                // 始点キャップ (bss_s) - partnerHeadY位置に描画
-                if (partnerHeadY >= (int)Config::SUDDEN_PLUS && partnerHeadY <= judgeY + 20) {
-                    const TextureRegion* head = (lnS && *lnS) ? lnS : target;
-                    if (head && *head) {
-                        SDL_Rect r = { x + 2, partnerHeadY - head->h, w - 4, head->h };
-                        SDL_RenderCopy(ren, head->texture, NULL, &r);
-                    }
-                }
-            } else {
-                // 通常LN描画
-                const TextureRegion* body = note.isBeingPressed
-                    ? ((SDL_GetTicks() / 100 % 2 == 0) ? lnA1 : lnA2)
-                    : lnB;
-
-                int dTY = std::max(tailY, (int)Config::SUDDEN_PLUS);
-                int dHY = std::min(headY, judgeY);
-
-                if (dHY > dTY && body && *body) {
-                    SDL_Rect r = { x + 4, dTY, w - 8, dHY - dTY };
-                    SDL_RenderCopy(ren, body->texture, NULL, &r);
-                }
-                if (tailY >= (int)Config::SUDDEN_PLUS && tailY <= judgeY) {
-                    const TextureRegion* end = (lnE && *lnE) ? lnE : target;
-                    if (end && *end) {
-                        SDL_Rect r = { x + 2, tailY - end->h, w - 4, end->h };
-                        SDL_RenderCopy(ren, end->texture, NULL, &r);
-                    }
+            if (dHY > dTY && body && *body) {
+                SDL_Rect r = { x + 4, dTY, w - 8, dHY - dTY };
+                SDL_RenderCopy(ren, body->texture, NULL, &r);
+            }
+            if (tailY >= (int)Config::SUDDEN_PLUS && tailY <= judgeY) {
+                const TextureRegion* end = (lnE && *lnE) ? lnE : target;
+                if (end && *end) {
+                    SDL_Rect r = { x + 2, tailY - end->h, w - 4, end->h };
+                    SDL_RenderCopy(ren, end->texture, NULL, &r);
                 }
             }
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
@@ -547,15 +484,10 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     }
 
     if (!(headY < (int)Config::SUDDEN_PLUS || headY > judgeY + 20)) {
-        // BSSの始点ノーツ（isLN=false）は終点LN側で描画済みのためスキップ
-        if (note.isBSS && !note.isLN) {
-            // nothing: drawn by the partner LN
-        } else {
-            const TextureRegion* head = (note.isLN && lnS && *lnS) ? lnS : target;
-            if (head && *head) {
-                SDL_Rect r = { x + 2, headY - head->h, w - 4, head->h };
-                SDL_RenderCopy(ren, head->texture, NULL, &r);
-            }
+        const TextureRegion* head = (note.isLN && lnS && *lnS) ? lnS : target;
+        if (head && *head) {
+            SDL_Rect r = { x + 2, headY - head->h, w - 4, head->h };
+            SDL_RenderCopy(ren, head->texture, NULL, &r);
         }
     }
 }

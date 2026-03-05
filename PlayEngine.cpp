@@ -297,13 +297,10 @@ void PlayEngine::init(BMSData& data) {
             PlayableNote& nxt = notes[scratchIdx[k + 1]];
             if (!cur.isLN) continue; // LNでなければスキップ
             int64_t endY = cur.y + cur.l;
-            // BSSの条件:
-            //   1. LN終点y == 次ノーツy（gap=0）
-            //   2. 次ノーツが単発（isLN=false）← 通常LNの終点リリース音はLNなので除外
-            if (std::abs(nxt.y - endY) <= 1 && !nxt.isLN) {
+            // gap <= 1y（bmson誤差を吸収）
+            if (std::abs(nxt.y - endY) <= 1) {
                 cur.isBSS = true;
                 nxt.isBSS = true;
-                cur.bssPartnerY = nxt.y;
             }
         }
     }

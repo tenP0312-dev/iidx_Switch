@@ -104,7 +104,6 @@ struct PlayableNote {
 
     // BSS (Back Spin Scratch): スクラッチLNの終点と次ノーツ始点が重なるケース
     bool    isBSS        = false; // このノーツがBSSペアに属する（終点LN側・始点側両方にセット）
-    int64_t bssPartnerY  = 0;     // 終点LN側: 始点ノーツのy座標。始点側: 0
 };
 
 // ============================================================
@@ -192,6 +191,7 @@ struct VideoFrame {
 };
 
 #endif // COMMONTYPES_HPP
+
 
 
 
