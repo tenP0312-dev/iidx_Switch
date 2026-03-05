@@ -31,6 +31,13 @@ private:
     // --- 補助関数 ---
     bool isAutoLane(int lane);
     int getLaneFromJoystickButton(int btn);
+    // フェードイン/アウト（durationMs: フェード時間ms）
+    void fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
+                BgaManager& bga, double cur_ms, int64_t cur_y,
+                const BMSHeader& header, uint32_t baseNow, int durationMs);
+    void fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
+                 BgaManager& bga, double cur_ms, int64_t cur_y,
+                 const BMSHeader& header, uint32_t baseNow, int durationMs);
 
     // --- メンバ変数 ---
     // ★修正: effects / bombAnims を std::vector から固定サイズ配列に変更。
@@ -69,6 +76,7 @@ private:
 };
 
 #endif
+
 
 
 

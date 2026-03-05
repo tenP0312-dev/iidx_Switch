@@ -102,8 +102,11 @@ struct PlayableNote {
     bool    isBeingPressed = false;
     bool    end_processed  = false;
 
-    // BSS (Back Spin Scratch): スクラッチLNの終点と次ノーツ始点が重なるケース
-    bool    isBSS        = false; // このノーツがBSSペアに属する（終点LN側・始点側両方にセット）
+    // BSS (Back Spin Scratch): LN2本以上がgap=32で連続し末尾が単発(gap=0)で終わるチェーン
+    bool isBSSHead = false; // チェーン先頭LN: bss_s + ボディ
+    bool isBSSMid  = false; // チェーン中間LN: ボディ + 終点にbss_middle
+    bool isBSSTail = false; // チェーン末尾LN: ボディ + 終点にbss_e（始点キャップなし）
+    int64_t bssNextY = 0;   // isBSSHead/Mid: 次LNのy座標（middle中心位置の計算用）
 };
 
 // ============================================================
@@ -191,6 +194,7 @@ struct VideoFrame {
 };
 
 #endif // COMMONTYPES_HPP
+
 
 
 

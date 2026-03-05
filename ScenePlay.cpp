@@ -99,17 +99,11 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     SDL_Delay(200);
 
     // ─────────────────────────────────────────────
-    // フェーズ 2: BMSON パースのみ
-    // ここに含まれるのは JSON 解析だけ。
-    // 動画・BGA・音声は一切触らない。
+    // フェーズ 2: BMSON パース（暗転のまま）
     // ─────────────────────────────────────────────
     {
-        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        renderer.renderBackground(ren);
-        renderer.renderLanes(ren, 0.0, 0);
-        renderer.drawText(ren, "BMSON Loading...", renderer.getLaneCenterX(),
-                          450, {255, 255, 0, 255}, false, true);
         SDL_RenderPresent(ren);
     }
     BMSData data = BmsonLoader::load(bmsonPath, [&](float /*progress*/) {
@@ -171,15 +165,7 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
         bga.registerPath(id, filename);
     }
 
-    // エンジン・BGA 準備完了 → タイトル・アーティスト・レベルを含む画面を表示
-    {
-        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
-        SDL_RenderClear(ren);
-        renderer.renderBackground(ren);
-        renderer.renderLanes(ren, 0.0, 0);
-        renderer.renderDecisionInfo(ren, currentHeader);
-        SDL_RenderPresent(ren);
-    }
+    // エンジン・BGA 準備完了 → まだ暗転のまま（音声ロード後にフェードイン）
 
     // ─────────────────────────────────────────────
     // フェーズ 4: BoxWav インデックス構築 → 音声ロード
@@ -195,15 +181,12 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
             bmsonBaseName = data.header.title;
     }
 
-    auto showLoadingScreen = [&](const char* text) {
-        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
+    auto showLoadingScreen = [&](const char* /*text*/) {
+        // 読み込み中は暗転のまま（音声ロード後にフェードイン）
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        renderer.renderBackground(ren);
-        renderer.renderLanes(ren, 0.0, 0);
-        renderer.renderDecisionInfo(ren, currentHeader);
-        renderer.drawTextCached(ren, text, renderer.getLaneCenterX(),
-                                450, {255, 255, 0, 255}, false, true);
         SDL_RenderPresent(ren);
+        SDL_Event e; while (SDL_PollEvent(&e));
     };
 
     showLoadingScreen("BOXWAV Loading...");
@@ -264,6 +247,13 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
         if (!n.isBGM) max_target_ms = std::max(max_target_ms, n.target_ms);
     }
 
+    // 音声ロード完了 → フェードインしてプレイ画面を表示
+    {
+        int64_t cur_y_wait = engine.getYFromMs(-2000.0);
+        fadeIn(ren, renderer, engine, bga, -2000.0, cur_y_wait, currentHeader, SDL_GetTicks(), 500);
+    }
+
+    // 待機ループ: 決定ボタンを押すまで HS/サドプラ/リフト調整可能
     bool waiting = true;
     while (waiting) {
         uint32_t now = SDL_GetTicks();
@@ -429,8 +419,17 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     Config::save();
 
     if (gradTex) SDL_DestroyTexture(gradTex);
+
+    // フェードアウトしてからbga/sndを停止
+    if (!isAborted) {
+        int64_t cur_y_end = engine.getYFromMs(
+            (double)((int64_t)SDL_GetTicks() - (int64_t)start_ticks));
+        double cur_ms_end = (double)((int64_t)SDL_GetTicks() - (int64_t)start_ticks);
+        fadeOut(ren, renderer, engine, bga, cur_ms_end, cur_y_end, currentHeader, SDL_GetTicks(), 500);
+    }
+
     snd.clear();
-    bga.cleanup(); 
+    bga.cleanup();
     if (isAborted) return false; 
     return true;
 }
@@ -571,6 +570,49 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
     return true;
 }
 
+void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
+                       BgaManager& bga, double cur_ms, int64_t cur_y,
+                       const BMSHeader& header, uint32_t baseNow, int durationMs) {
+    uint32_t start = SDL_GetTicks();
+    while (true) {
+        uint32_t now = SDL_GetTicks();
+        float t = std::min(1.0f, (float)(now - start) / (float)durationMs);
+        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
+        // 黒オーバーレイを (1-t) の不透明度で上書き
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, (Uint8)((1.0f - t) * 255));
+        SDL_RenderFillRect(ren, nullptr);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        SDL_RenderPresent(ren);
+        SDL_Event e; while (SDL_PollEvent(&e)) {}
+#ifdef __SWITCH__
+        if (!appletMainLoop()) break;
+#endif
+        if (t >= 1.0f) break;
+    }
+}
+
+void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
+                        BgaManager& bga, double cur_ms, int64_t cur_y,
+                        const BMSHeader& header, uint32_t baseNow, int durationMs) {
+    uint32_t start = SDL_GetTicks();
+    while (true) {
+        uint32_t now = SDL_GetTicks();
+        float t = std::min(1.0f, (float)(now - start) / (float)durationMs);
+        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 1.0);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, (Uint8)(t * 255));
+        SDL_RenderFillRect(ren, nullptr);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        SDL_RenderPresent(ren);
+        SDL_Event e; while (SDL_PollEvent(&e)) {}
+#ifdef __SWITCH__
+        if (!appletMainLoop()) break;
+#endif
+        if (t >= 1.0f) break;
+    }
+}
+
 void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine, BgaManager& bga, double cur_ms, int64_t cur_y, int fps, const BMSHeader& header, uint32_t now, double progress) {
     SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
     SDL_RenderClear(ren);
@@ -599,9 +641,7 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
         }
     }
 
-    // --- ノーツ描画（スライディング・ウィンドウ）---
-    // ★修正: notes を先に描画し、effects/bombs を後から重ねる。
-    //        旧実装では bombs → notes の順だったため、LNの上にボムが隠れていた。
+    // --- ノーツ描画: 2パス（単発→LN の順）---
     const auto& allNotes = engine.getNotes();
 
     while (drawStartIndex < allNotes.size()
@@ -610,19 +650,33 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
         drawStartIndex++;
     }
 
+    // パス1: 単発ノーツ
     for (size_t i = drawStartIndex; i < allNotes.size(); ++i) {
         const auto& n = allNotes[i];
-
         double y_diff = (double)(n.y - cur_y);
         if (!n.isBeingPressed && y_diff > max_visible_y) break;
-
-        if ((!n.played || n.isBeingPressed) && !n.isBGM) {
-            double end_y_diff = n.isLN ? (double)(n.y + n.l - cur_y) : y_diff;
+        if ((!n.played || n.isBeingPressed) && !n.isBGM && !n.isLN) {
+            double end_y_diff = (double)(n.y - cur_y);
             if (end_y_diff > -5000.0) {
                 renderer.renderNote(ren, n, cur_y, pixels_per_y, isAutoLane(n.lane));
             }
         }
     }
+    // パス2: LNノーツ
+    for (size_t i = drawStartIndex; i < allNotes.size(); ++i) {
+        const auto& n = allNotes[i];
+        double y_diff = (double)(n.y - cur_y);
+        if (!n.isBeingPressed && y_diff > max_visible_y) break;
+        if ((!n.played || n.isBeingPressed) && !n.isBGM && n.isLN) {
+            double end_y_diff = (double)(n.y + n.l - cur_y);
+            if (end_y_diff > -5000.0) {
+                renderer.renderNote(ren, n, cur_y, pixels_per_y, isAutoLane(n.lane));
+            }
+        }
+    }
+
+    // SUDDEN_PLUS/LIFTオーバーレイをノーツの上に描画
+    renderer.renderSuddenLift(ren);
 
     // エフェクト(キービーム) → ボムの順で描画 (ノーツより前面)
     // ★修正: 描画ループを NoteRenderer に移動し、ScenePlay は呼び出すだけにする。

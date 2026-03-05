@@ -90,6 +90,7 @@ public:
 
     void renderBackground(SDL_Renderer* ren);
     void renderLanes(SDL_Renderer* ren, double progress, int scratchStatus = 0);
+    void renderSuddenLift(SDL_Renderer* ren); // SUDDEN_PLUS/LIFTオーバーレイ（ノーツ描画後に呼ぶ）
     void renderBeatLine(SDL_Renderer* ren, double diff_y, double pixels_per_y);
     void renderHitEffect(SDL_Renderer* ren, int lane, float progress);
     void renderBomb(SDL_Renderer* ren, int lane, int frame);
@@ -153,8 +154,8 @@ private:
     TextureRegion texNoteBlue_LNS,  texNoteBlue_LNE;
     TextureRegion texNoteRed_LNS,   texNoteRed_LNE;
 
-    // BSS (Back Spin Scratch) 専用テクスチャ: 始点・終点
-    TextureRegion texNoteRed_BSS_S, texNoteRed_BSS_E;
+    // BSS (Back Spin Scratch) 専用テクスチャ
+    TextureRegion texNoteRed_BSS_S, texNoteRed_BSS_Mid, texNoteRed_BSS_E;
     TextureRegion texKeybeamWhite, texKeybeamBlue, texKeybeamRed;
     TextureRegion texJudgeAtlas, texNumberAtlas;
     std::vector<TextureRegion> texBombs;
@@ -180,6 +181,7 @@ private:
 };
 
 #endif // NOTERENDERER_HPP
+
 
 
 

@@ -92,8 +92,9 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     loadAndCache(ren, texNoteBlue_LNE,  s + "note_blue_lne.png");
     loadAndCache(ren, texNoteRed_LNS,   s + "note_red_lns.png");
     loadAndCache(ren, texNoteRed_LNE,   s + "note_red_lne.png");
-    loadAndCache(ren, texNoteRed_BSS_S, s + "note_red_bss_s.png");
-    loadAndCache(ren, texNoteRed_BSS_E, s + "note_red_bss_e.png");
+    loadAndCache(ren, texNoteRed_BSS_S,   s + "note_red_bss_s.png");
+    loadAndCache(ren, texNoteRed_BSS_Mid, s + "note_red_bss_middle.png");
+    loadAndCache(ren, texNoteRed_BSS_E,   s + "note_red_bss_e.png");
 
     loadAndCache(ren, texKeybeamWhite, s + "beam_white.png");
     loadAndCache(ren, texKeybeamBlue,  s + "beam_blue.png");
@@ -156,7 +157,7 @@ void NoteRenderer::cleanup() {
     texNoteWhite_LNS.reset(); texNoteWhite_LNE.reset();
     texNoteBlue_LNS.reset();  texNoteBlue_LNE.reset();
     texNoteRed_LNS.reset();   texNoteRed_LNE.reset();
-    texNoteRed_BSS_S.reset(); texNoteRed_BSS_E.reset();
+    texNoteRed_BSS_S.reset(); texNoteRed_BSS_Mid.reset(); texNoteRed_BSS_E.reset();
     texKeybeamWhite.reset(); texKeybeamBlue.reset(); texKeybeamRed.reset();
     texJudgeAtlas.reset(); texNumberAtlas.reset(); texLaneCover.reset();
     texGaugeAssist.reset(); texGaugeNormal.reset(); texGaugeHard.reset();
@@ -378,23 +379,10 @@ void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchSt
     }
 
     if (Config::SUDDEN_PLUS > 0) {
-        int sH = std::min(Config::SUDDEN_PLUS, laneHeight);
-        SDL_Rect dR = { startX, 0, totalWidth, sH };
-        if (texLaneCover) {
-            SDL_Rect sR = { 0, texLaneCover.h - sH, texLaneCover.w, sH };
-            SDL_RenderCopy(ren, texLaneCover.texture, &sR, &dR);
-        } else {
-            SDL_SetRenderDrawColor(ren, 20, 20, 20, 255); SDL_RenderFillRect(ren, &dR);
-        }
+        // SUDDEN_PLUSオーバーレイはrenderSuddenLift()で描画（ノーツ描画後）
     }
     if (Config::LIFT > 0) {
-        SDL_Rect dR = { startX, judgeY, totalWidth, Config::LIFT };
-        if (texLaneCover) {
-            SDL_Rect sR = { 0, 0, texLaneCover.w, std::min(Config::LIFT, texLaneCover.h) };
-            SDL_RenderCopy(ren, texLaneCover.texture, &sR, &dR);
-        } else {
-            SDL_SetRenderDrawColor(ren, 20, 20, 20, 255); SDL_RenderFillRect(ren, &dR);
-        }
+        // LIFTオーバーレイはrenderSuddenLift()で描画（ノーツ描画後）
     }
     // 各レーンの区切り線
     SDL_SetRenderDrawColor(ren, 50, 50, 50, 255);
@@ -437,12 +425,7 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     if (note.lane == 8) {
         target = &texNoteRed; lnB = &texNoteRed_LN;
         lnA1 = &texNoteRed_LN_Active1; lnA2 = &texNoteRed_LN_Active2;
-        if (note.isBSS) {
-            lnS = (texNoteRed_BSS_S) ? &texNoteRed_BSS_S : &texNoteRed_LNS;
-            lnE = (texNoteRed_BSS_E) ? &texNoteRed_BSS_E : &texNoteRed_LNE;
-        } else {
-            lnS = &texNoteRed_LNS; lnE = &texNoteRed_LNE;
-        }
+        lnS  = &texNoteRed_LNS;        lnE  = &texNoteRed_LNE;
     } else if (note.lane % 2 == 0) {
         target = &texNoteBlue; lnB = &texNoteBlue_LN;
         lnA1 = &texNoteBlue_LN_Active1; lnA2 = &texNoteBlue_LN_Active2;
@@ -468,26 +451,59 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
             int dTY = std::max(tailY, (int)Config::SUDDEN_PLUS);
             int dHY = std::min(headY, judgeY);
 
+            // ボディ: 始点下端〜終点下端まで（終点テクスチャと重なるがその後で上描き）
             if (dHY > dTY && body && *body) {
                 SDL_Rect r = { x + 4, dTY, w - 8, dHY - dTY };
                 SDL_RenderCopy(ren, body->texture, NULL, &r);
             }
-            if (tailY >= (int)Config::SUDDEN_PLUS && tailY <= judgeY) {
-                const TextureRegion* end = (lnE && *lnE) ? lnE : target;
-                if (end && *end) {
-                    SDL_Rect r = { x + 2, tailY - end->h, w - 4, end->h };
-                    SDL_RenderCopy(ren, end->texture, NULL, &r);
+
+            // 終点テクスチャ（ボディより後に描くので上に来る）
+            const TextureRegion* endTex = nullptr;
+            if (note.isBSSTail) {
+                endTex = (texNoteRed_BSS_E)   ? &texNoteRed_BSS_E   : lnE;
+            } else if (note.isBSSMid || note.isBSSHead) {
+                endTex = (texNoteRed_BSS_Mid) ? &texNoteRed_BSS_Mid : lnE;
+            } else {
+                endTex = (lnE && *lnE) ? lnE : target;
+            }
+
+            // middle: 自LN終点と次LN始点の中間に中心を合わせる
+            int endDrawY = tailY;
+            if ((note.isBSSHead || note.isBSSMid) && note.bssNextY != 0 && endTex && *endTex) {
+                int nextHeadY = judgeY - (int)((note.bssNextY - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
+                int centerY   = (tailY + nextHeadY) / 2;
+                endDrawY = centerY + endTex->h / 2;
+            }
+
+            if (endDrawY >= (int)Config::SUDDEN_PLUS && endDrawY <= judgeY + endTex->h) {
+                if (endTex && *endTex) {
+                    SDL_Rect r = { x + 2, endDrawY - endTex->h, w - 4, endTex->h };
+                    SDL_RenderCopy(ren, endTex->texture, NULL, &r);
                 }
             }
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
         }
     }
 
+    // 始点描画
+    // BSS中間・末尾LNは始点キャップを描かない（前のLNとbss_middleで繋がっているため）
     if (!(headY < (int)Config::SUDDEN_PLUS || headY > judgeY + 20)) {
-        const TextureRegion* head = (note.isLN && lnS && *lnS) ? lnS : target;
-        if (head && *head) {
-            SDL_Rect r = { x + 2, headY - head->h, w - 4, head->h };
-            SDL_RenderCopy(ren, head->texture, NULL, &r);
+        if (note.isBSSMid || note.isBSSTail) {
+            // 始点キャップなし
+        } else if (note.isBSSHead) {
+            // 先頭LN → bss_s
+            const TextureRegion* headTex = (texNoteRed_BSS_S) ? &texNoteRed_BSS_S : lnS;
+            if (headTex && *headTex) {
+                SDL_Rect r = { x + 2, headY - headTex->h, w - 4, headTex->h };
+                SDL_RenderCopy(ren, headTex->texture, NULL, &r);
+            }
+        } else {
+            // 通常LN or 単発
+            const TextureRegion* headTex = (note.isLN && lnS && *lnS) ? lnS : target;
+            if (headTex && *headTex) {
+                SDL_Rect r = { x + 2, headY - headTex->h, w - 4, headTex->h };
+                SDL_RenderCopy(ren, headTex->texture, NULL, &r);
+            }
         }
     }
 }
@@ -496,6 +512,34 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
 // ================================================================
 // NoteRenderer.cpp の renderBeatLine 実装を差し替えてください
 // ================================================================
+
+void NoteRenderer::renderSuddenLift(SDL_Renderer* ren) {
+    rebuildLaneLayout();
+    int totalWidth = ll.totalWidth;
+    int startX     = ll.baseX;
+    int laneHeight = 482;
+    int judgeY     = Config::JUDGMENT_LINE_Y - Config::LIFT;
+
+    if (Config::SUDDEN_PLUS > 0) {
+        int sH = std::min(Config::SUDDEN_PLUS, laneHeight);
+        SDL_Rect dR = { startX, 0, totalWidth, sH };
+        if (texLaneCover) {
+            SDL_Rect sR = { 0, texLaneCover.h - sH, texLaneCover.w, sH };
+            SDL_RenderCopy(ren, texLaneCover.texture, &sR, &dR);
+        } else {
+            SDL_SetRenderDrawColor(ren, 20, 20, 20, 255); SDL_RenderFillRect(ren, &dR);
+        }
+    }
+    if (Config::LIFT > 0) {
+        SDL_Rect dR = { startX, judgeY, totalWidth, Config::LIFT };
+        if (texLaneCover) {
+            SDL_Rect sR = { 0, 0, texLaneCover.w, std::min(Config::LIFT, texLaneCover.h) };
+            SDL_RenderCopy(ren, texLaneCover.texture, &sR, &dR);
+        } else {
+            SDL_SetRenderDrawColor(ren, 20, 20, 20, 255); SDL_RenderFillRect(ren, &dR);
+        }
+    }
+}
 
 void NoteRenderer::renderBeatLine(SDL_Renderer* ren, double diff_y, double pixels_per_y) {
     int judgeY = Config::JUDGMENT_LINE_Y - Config::LIFT;
@@ -813,6 +857,7 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
 
 
 

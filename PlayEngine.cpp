@@ -276,31 +276,61 @@ void PlayEngine::init(BMSData& data) {
     });
 
     // ── BSS検出 ──────────────────────────────────────────────────────────
-    // スクラッチ(lane==8)のLN終点と次スクラッチノーツの始点が同一yのペアを検出。
-    // 「全てのロングスクラッチの終点には単発ノーツが置かれる」という仕様を考慮し、
-    // LN終点y == 次ノーツy かつ 次ノーツがさらにもう一つ先にも重なっている場合のみBSS。
-    // 具体的には: LN終点に単発が置かれるのは通常仕様→スキップ。
-    //             LN終点y == 次LN始点y の場合がBSS。
-    //             または LN終点y == 単発y かつ その単発の次にも別ノーツが gap=0 で続く場合もBSS。
-    // 判定: lane==8 で (LN終点y == 次ノーツy) かつ 次ノーツもlane==8 であればBSS。
+    // BSSチェーンの定義:
+    //   lane==8 で LN が gap=32 で2本以上連続し、末尾LNの終点に単発(gap=0)が来るパターン。
+    //   先頭LN → isBSSHead、中間LN → isBSSMid、末尾LN → isBSSTail
+    //   単発はフラグなし（bss_eに隠れるのでそのまま描画）
     {
-        // lane==8のノーツのみ抽出してインデックスを保持
         std::vector<size_t> scratchIdx;
         for (size_t i = 0; i < notes.size(); ++i) {
             if (notes[i].lane == 8 && !notes[i].isBGM)
                 scratchIdx.push_back(i);
         }
-        // y座標でソート（target_msでソート済みなので通常は既にy順）
-        // 終点y == 次始点y のペアを検出
-        for (size_t k = 0; k + 1 < scratchIdx.size(); ++k) {
-            PlayableNote& cur = notes[scratchIdx[k]];
-            PlayableNote& nxt = notes[scratchIdx[k + 1]];
-            if (!cur.isLN) continue; // LNでなければスキップ
-            int64_t endY = cur.y + cur.l;
-            // gap <= 1y（bmson誤差を吸収）
-            if (std::abs(nxt.y - endY) <= 1) {
-                cur.isBSS = true;
-                nxt.isBSS = true;
+
+        size_t n = scratchIdx.size();
+        size_t k = 0;
+        while (k < n) {
+            // LNでなければスキップ
+            if (!notes[scratchIdx[k]].isLN) { ++k; continue; }
+
+            // k から始まるLN連鎖を収集（gap <= 33 で次もLN）
+            std::vector<size_t> chain;
+            chain.push_back(k);
+            size_t j = k + 1;
+            while (j < n && notes[scratchIdx[j]].isLN) {
+                PlayableNote& prev = notes[scratchIdx[j - 1]];
+                PlayableNote& cur  = notes[scratchIdx[j]];
+                int64_t gap = cur.y - (prev.y + prev.l);
+                if (gap <= 33) { // gap=32 ± 誤差
+                    chain.push_back(j);
+                    ++j;
+                } else {
+                    break;
+                }
+            }
+
+            // 連鎖末尾の次が単発(gap=0)ならBSSチェーン確定
+            bool isBSS = false;
+            if (chain.size() >= 2 && j < n) {
+                PlayableNote& lastLN   = notes[scratchIdx[chain.back()]];
+                PlayableNote& nextNote = notes[scratchIdx[j]];
+                int64_t gap = nextNote.y - (lastLN.y + lastLN.l);
+                if (!nextNote.isLN && std::abs(gap) <= 1) {
+                    isBSS = true;
+                }
+            }
+
+            if (isBSS) {
+                notes[scratchIdx[chain.front()]].isBSSHead = true;
+                for (size_t m = 1; m + 1 < chain.size(); ++m)
+                    notes[scratchIdx[chain[m]]].isBSSMid = true;
+                notes[scratchIdx[chain.back()]].isBSSTail = true;
+                // 各LN(Head/Mid)に次LNのy座標を設定（middle中心位置の計算用）
+                for (size_t m = 0; m + 1 < chain.size(); ++m)
+                    notes[scratchIdx[chain[m]]].bssNextY = notes[scratchIdx[chain[m + 1]]].y;
+                k = j + 1;
+            } else {
+                k = chain.back() + 1;
             }
         }
     }
@@ -630,6 +660,7 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
 
 
 
