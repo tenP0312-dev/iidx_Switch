@@ -57,7 +57,8 @@ private:
     BMSHeader currentHeader;
 
     bool isAssistUsed = false;
-    bool startButtonPressed = false;     
+    bool startButtonPressed  = false;     // STARTボタン (HS変更・サドプラ等に使用)
+    bool decideButtonPressed = false;     // DECIDEボタン (待機中の曲開始に使用)
     bool effectButtonPressed = false;    
 
     bool lanePressed[9] = {false}; 
@@ -76,6 +77,8 @@ private:
 };
 
 #endif
+
+
 
 
 

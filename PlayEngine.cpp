@@ -34,11 +34,22 @@ void PlayEngine::init(BMSData& data) {
     int laneMap[9];
     for (int i = 0; i <= 8; i++) laneMap[i] = i;
 
-    // ★修正: std::random_device は Switch 等の組み込み環境では
-    //        エントロピーソースがなく毎回同じ値を返すことがある。
-    //        SDL_GetPerformanceCounter() はナノ秒精度のカウンタなので
-    //        再プレイのたびに異なるシードになり、毎回違う配置になる。
-    std::mt19937 g(static_cast<uint32_t>(SDL_GetPerformanceCounter()));
+    // 決定論的シード: 譜面タイトル・チャート名・総ノーツ数・MORE_NOTES_COUNTから生成。
+    // std::hash<string> はプラットフォーム依存で環境ごとに変わるため使用しない。
+    // FNV-1a (32bit) で文字列をハッシュし、数値と混ぜて最終シードを作る。
+    // 同じ譜面・同じ設定なら機種・再起動をまたいで必ず同じ配置になる。
+    auto fnv1a32 = [](const std::string& s) -> uint32_t {
+        uint32_t h = 2166136261u;
+        for (unsigned char c : s) { h ^= c; h *= 16777619u; }
+        return h;
+    };
+    uint32_t chartSeed = fnv1a32(data.header.title);
+    chartSeed ^= fnv1a32(data.header.chartName) * 2654435761u;
+    chartSeed ^= static_cast<uint32_t>(data.header.totalNotes) * 2246822519u;
+    chartSeed ^= static_cast<uint32_t>(Config::MORE_NOTES_COUNT) * 3266489917u;
+    // avalanche mix
+    chartSeed ^= chartSeed >> 16; chartSeed *= 0x45d9f3bu; chartSeed ^= chartSeed >> 16;
+    std::mt19937 g(chartSeed);
 
     if (Config::PLAY_OPTION == 1) { // RANDOM
         std::vector<int> kbd = {1, 2, 3, 4, 5, 6, 7};
@@ -113,7 +124,11 @@ void PlayEngine::init(BMSData& data) {
 
         // 縦連回避: 各レーンの既存ノーツy座標をソート済みリストで保持
         // lower_boundで「直前の既存ノーツy」を O(logN) で取得する
-        const int64_t ANTI_CONSEC_Y = 300; // 約4分音符3/8。狭くすると全パス2に落ちるので少し広め
+        // ANTI_CONSEC_Y: resolutionベースで動的計算。
+        //   16分音符1.5個分 (resolution*3/8) を基準にし、
+        //   密度が高い譜面でもパス3への落下を抑制する。
+        const int64_t res = data.header.resolution;
+        const int64_t ANTI_CONSEC_Y = std::max<int64_t>(res * 3 / 8, 120); // 16分音符1.5個分相当
         std::vector<int64_t> existingY[9]; // lane 1-7
         for (const auto& tn : tempNotes) {
             if (!tn.isBGM && tn.originalLane >= 1 && tn.originalLane <= 7)
@@ -125,6 +140,9 @@ void PlayEngine::init(BMSData& data) {
         // 追加ノーツ処理中の「直前使用y」（追加ノーツ同士の縦連管理用）
         int64_t lastAddedY[9];
         for (int i = 0; i < 9; i++) lastAddedY[i] = -999999;
+
+        // レーン使用カウンタ: 頻繁に使われたレーンを優先度下げる
+        int laneUseCount[9] = {};
 
         // 同一yの既存プレイノーツを事前マスク登録
         std::unordered_map<int64_t, uint8_t> moreUsedMask;
@@ -152,34 +170,70 @@ void PlayEngine::init(BMSData& data) {
             return *it;
         };
 
+        // 既存ノーツから「yより大きい直後y」を取得
+        auto getNextExistY = [&](int lane, int64_t y) -> int64_t {
+            const auto& v = existingY[lane];
+            if (v.empty()) return INT64_MAX;
+            auto it = std::upper_bound(v.begin(), v.end(), y);
+            if (it == v.end()) return INT64_MAX;
+            return *it;
+        };
+
+        // 直前に置いたレーンを記録（パス3の最低限縦連回避用）
+        int lastChosenLane = -1;
+
         for (size_t idx : bgmCandidates) {
             const TempNote& src = tempNotes[idx];
             int64_t y = src.y;
             uint8_t& ymask = moreUsedMask[y];
 
+            // レーンをuse countの少ない順に並べ、均等分散を促進
             std::vector<int> lanes = {1, 2, 3, 4, 5, 6, 7};
             std::shuffle(lanes.begin(), lanes.end(), g);
+            std::stable_sort(lanes.begin(), lanes.end(), [&](int a, int b){
+                return laneUseCount[a] < laneUseCount[b];
+            });
 
             int chosen = -1;
-            // パス1: 既存ノーツ+追加ノーツ両方との縦連を回避 + LN回避
+            // パス1: 直前+直後の既存ノーツ・追加ノーツ両方との縦連を回避 + LN回避
             for (int lane : lanes) {
                 if (ymask & (1u << lane)) continue;
                 int64_t prevY = std::max(getPrevExistY(lane, y), lastAddedY[lane]);
+                int64_t nextY = getNextExistY(lane, y);
                 if (y - prevY < ANTI_CONSEC_Y) continue;
+                if (nextY - y < ANTI_CONSEC_Y) continue;
                 if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
             }
-            // パス2: 追加ノーツ同士の縦連のみ回避（既存との縦連は許容）
+            // パス2: 追加ノーツ同士の縦連のみ回避 + 直後の既存ノーツとの縦連も回避
             if (chosen < 0) {
-                std::shuffle(lanes.begin(), lanes.end(), g);
                 for (int lane : lanes) {
                     if (ymask & (1u << lane)) continue;
                     if (y - lastAddedY[lane] < ANTI_CONSEC_Y) continue;
+                    int64_t nextY = getNextExistY(lane, y);
+                    if (nextY - y < ANTI_CONSEC_Y) continue;
                     if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
                 }
             }
-            // パス3: LN回避のみ（縦連制約を完全に緩和）
+            // パス3: 直後チェックのみ（直前は許容）
             if (chosen < 0) {
-                std::shuffle(lanes.begin(), lanes.end(), g);
+                for (int lane : lanes) {
+                    if (ymask & (1u << lane)) continue;
+                    if (lane == lastChosenLane) continue;
+                    int64_t nextY = getNextExistY(lane, y);
+                    if (nextY - y < ANTI_CONSEC_Y) continue;
+                    if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
+                }
+            }
+            // パス4: LN回避のみ。直前・直後とも許容するが直前レーンは除外
+            if (chosen < 0) {
+                for (int lane : lanes) {
+                    if (ymask & (1u << lane)) continue;
+                    if (lane == lastChosenLane) continue;
+                    if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
+                }
+            }
+            // パス5: 完全フォールバック（同一yに空きがあれば何でも置く）
+            if (chosen < 0) {
                 for (int lane : lanes) {
                     if (ymask & (1u << lane)) continue;
                     if (!checkLnBlocked(lane, y)) { chosen = lane; break; }
@@ -189,6 +243,8 @@ void PlayEngine::init(BMSData& data) {
 
             ymask |= (1u << chosen);
             lastAddedY[chosen] = y;
+            laneUseCount[chosen]++;
+            lastChosenLane = chosen;
 
             TempNote added = src;
             added.isBGM        = false;
@@ -660,6 +716,8 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+
 
 
 

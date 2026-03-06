@@ -142,7 +142,8 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     }
 
     isAssistUsed       = (Config::ASSIST_OPTION > 0);
-    startButtonPressed = false;
+    startButtonPressed  = false;
+    decideButtonPressed  = false;
     effectButtonPressed= false;
     scratchUpActive    = false;
     scratchDownActive  = false;
@@ -253,21 +254,22 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
         fadeIn(ren, renderer, engine, bga, -2000.0, cur_y_wait, currentHeader, SDL_GetTicks(), 500);
     }
 
-    // 待機ループ: 決定ボタンを押すまで HS/サドプラ/リフト調整可能
+    // 待機ループ: DECIDEボタンを押すまで HS/サドプラ/リフト調整可能
+    // STARTボタンはHS変更等に使うため、曲開始はDECIDEボタン(SYS_BTN_DECIDE)に分離。
+    // processInput 内で decideButtonPressed をセットし、ここで検知して待機を終了する。
+    // startTicks を仮設定しておくことで processInput 内の HS 変更計算を安定させる。
+    startTicks = SDL_GetTicks() + 99999999; // 待機中はゲームが始まらない大きな値
     bool waiting = true;
     while (waiting) {
         uint32_t now = SDL_GetTicks();
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            if (ev.type == SDL_QUIT) return false;
-            if (ev.type == SDL_JOYBUTTONDOWN) {
-                if (ev.jbutton.button == Config::SYS_BTN_DECIDE) {
-                    waiting = false;
-                    break;
-                }
-            }
-        }
+        // processInput を先に呼んでイベントを全消費、その中で HS/サドプラ変更も処理
         if (!processInput(-2000.0, now, snd, engine)) return false;
+        // processInput 後に残ったフラグでDECIDEボタン確認
+        // STARTボタンは待機中もHS/サドプラ変更に使うため競合しないよう分離
+        // STARTボタン長押し中はDECIDEを無効化: HS変更ボタンにDECIDEが割り当たっていても誤爆しない
+        if (decideButtonPressed && !startButtonPressed) {
+            waiting = false;
+        }
         bga.preLoad(0, ren);
         renderScene(ren, renderer, engine, bga, -2000.0, 0, 0, currentHeader, now, 0.0);
         renderer.drawTextCached(ren, "PRESS DECIDE BUTTON TO START",
@@ -277,6 +279,8 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
         if (!appletMainLoop()) return false;
 #endif
     }
+    startButtonPressed  = false; // 待機終了後はリセット
+    decideButtonPressed  = false;
 
     uint32_t start_ticks = SDL_GetTicks() + 2000;
     startTicks = start_ticks; // ★修正(CRITICAL-1): メンバ変数にコピー → processInput で参照
@@ -502,6 +506,7 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
                 }
                 startButtonPressed = isDown;
             }
+            if (btn == Config::SYS_BTN_DECIDE) decideButtonPressed = isDown;
             if (btn == Config::BTN_EFFECT) effectButtonPressed = isDown;
             if (btn == Config::BTN_LANE8_A) scratchUpActive = isDown;
             if (btn == Config::BTN_LANE8_B) scratchDownActive = isDown;
@@ -573,16 +578,20 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
 void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
                        BgaManager& bga, double cur_ms, int64_t cur_y,
                        const BMSHeader& header, uint32_t baseNow, int durationMs) {
+    SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
     uint32_t start = SDL_GetTicks();
     while (true) {
         uint32_t now = SDL_GetTicks();
         float t = std::min(1.0f, (float)(now - start) / (float)durationMs);
         renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
-        // 黒オーバーレイを (1-t) の不透明度で上書き
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren, 0, 0, 0, (Uint8)((1.0f - t) * 255));
-        SDL_RenderFillRect(ren, nullptr);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        // プレイ画面の上に黒矩形を (1-t) の不透明度で重ねる
+        Uint8 alpha = (Uint8)((1.0f - t) * 255);
+        if (alpha > 0) {
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, alpha);
+            SDL_RenderFillRect(ren, &screen);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        }
         SDL_RenderPresent(ren);
         SDL_Event e; while (SDL_PollEvent(&e)) {}
 #ifdef __SWITCH__
@@ -595,15 +604,20 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
 void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
                         BgaManager& bga, double cur_ms, int64_t cur_y,
                         const BMSHeader& header, uint32_t baseNow, int durationMs) {
+    SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
     uint32_t start = SDL_GetTicks();
     while (true) {
         uint32_t now = SDL_GetTicks();
         float t = std::min(1.0f, (float)(now - start) / (float)durationMs);
         renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 1.0);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren, 0, 0, 0, (Uint8)(t * 255));
-        SDL_RenderFillRect(ren, nullptr);
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        // プレイ画面の上に黒矩形を t の不透明度で重ねる
+        Uint8 alpha = (Uint8)(t * 255);
+        if (alpha > 0) {
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, alpha);
+            SDL_RenderFillRect(ren, &screen);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        }
         SDL_RenderPresent(ren);
         SDL_Event e; while (SDL_PollEvent(&e)) {}
 #ifdef __SWITCH__

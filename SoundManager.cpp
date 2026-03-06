@@ -22,51 +22,156 @@ void SoundManager::init() {
 
 void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::string& bmsonName) {
     boxIndex.clear();
-    int partIdx = 1;
-    while (true) {
-        std::string suffix = (partIdx == 1) ? "" : std::to_string(partIdx);
-        std::string pckPath = rootPath + (rootPath.empty() || rootPath.back() == '/' ? "" : "/") + bmsonName + suffix + ".boxwav";
 
-        // ★修正: SDL_Delay(2500) の無条件ハードスリープを廃止。
-        //        旧実装は「2.5秒待てば I/O が安定する」という根拠のない仮定に基づいており、
-        //        遅い microSD では 2.5秒でも足りず、速い microSD では無駄に待つだけだった。
-        //        新実装: ファイルを開けたら即座に処理を続行し、
-        //                開けなかった場合のみ exponential backoff でリトライする。
-        //        200ms → 400ms → 800ms → 1600ms → 3200ms の最大5回試行 (計 ~6秒上限)。
-        //        ファイルが存在しない場合（= これ以上パートがない）は即座に終了する。
-        std::ifstream ifs;
-        if (partIdx > 1) {
-            for (int retry = 0; retry < 5; ++retry) {
-                ifs.open(pckPath, std::ios::binary);
-                if (ifs) break;
-                // 存在しないファイルへのリトライは無意味なので open 失敗=終了とみなす
-                // (ただし I/O 一時エラーの可能性を考慮して 1 回だけ短い待機を挟む)
-                if (retry == 0) SDL_Delay(200);
-                else break;
+    // ── ヘルパー: 通常boxwavのエントリをboxIndexに登録 ──────────────────
+    // pckPath のファイルを開き、エントリを boxIndex に追加する。
+    // REDIRECT/REDIRECT+EXTRA の場合は参照先を解決してから登録する。
+    // マルチパート (boxwav, boxwav2, ...) も処理する。
+    auto loadBoxFile = [&](const std::string& pckPath) {
+        int partIdx = 1;
+        std::string curPath = pckPath;
+        while (true) {
+            std::ifstream ifs;
+            if (partIdx > 1) {
+                // パート2以降: exponential backoff で最大2回試行
+                for (int retry = 0; retry < 2; ++retry) {
+                    ifs.open(curPath, std::ios::binary);
+                    if (ifs) break;
+                    if (retry == 0) SDL_Delay(200);
+                    else break;
+                }
+            } else {
+                ifs.open(curPath, std::ios::binary);
             }
-        } else {
-            ifs.open(pckPath, std::ios::binary);
+            if (!ifs) break;
+
+            uint32_t magic;
+            if (!ifs.read((char*)&magic, 4)) break;
+
+            // ── REDIRECT (0xFFFFFFFF) ──────────────────────────────────
+            if (magic == 0xFFFFFFFF) {
+                char targetBuf[32];
+                if (!ifs.read(targetBuf, 32)) break;
+                std::string targetName(targetBuf, strnlen(targetBuf, 32));
+                // 同フォルダの実体boxwavを再帰的にロード
+                std::string dir = curPath.substr(0, curPath.find_last_of('/') + 1);
+                std::string realPath = dir + targetName;
+                // 実体ファイルをそのままロード (パート分割あり)
+                int rPartIdx = 1;
+                while (true) {
+                    std::string suffix = (rPartIdx == 1) ? "" : std::to_string(rPartIdx);
+                    // 拡張子の直前にsuffixを挿入: "33086.boxwav" → "33086.boxwav", "330862.boxwav"
+                    std::string rPath;
+                    auto dotPos = realPath.rfind('.');
+                    if (dotPos != std::string::npos && rPartIdx > 1)
+                        rPath = realPath.substr(0, dotPos) + suffix + realPath.substr(dotPos);
+                    else
+                        rPath = realPath;
+                    std::ifstream rifs(rPath, std::ios::binary);
+                    if (!rifs) break;
+                    uint32_t rCount, rd1, rd2;
+                    if (!rifs.read((char*)&rCount, 4)) break;
+                    rifs.read((char*)&rd1, 4); rifs.read((char*)&rd2, 4);
+                    for (uint32_t i = 0; i < rCount; ++i) {
+                        char nameBuf[32]; uint32_t fSize;
+                        if (!rifs.read(nameBuf, 32)) break;
+                        if (!rifs.read((char*)&fSize, 4)) break;
+                        std::string fileName(nameBuf, strnlen(nameBuf, 32));
+                        boxIndex[fileName] = { rPath, (uint32_t)rifs.tellg(), fSize };
+                        rifs.seekg(fSize, std::ios::cur);
+                    }
+                    rPartIdx++;
+                    if (rPartIdx > 128) break;
+                }
+                break; // REDIRECT ファイル自体はパート分割なし
+            }
+
+            // ── REDIRECT+EXTRA (0xFFFFFFFE) ───────────────────────────
+            if (magic == 0xFFFFFFFE) {
+                char targetBuf[32];
+                if (!ifs.read(targetBuf, 32)) break;
+                std::string targetName(targetBuf, strnlen(targetBuf, 32));
+                // 共通boxwavをロード (上記REDIRECTと同じロジック)
+                std::string dir = curPath.substr(0, curPath.find_last_of('/') + 1);
+                std::string realPath = dir + targetName;
+                int rPartIdx = 1;
+                while (true) {
+                    std::string rPath;
+                    auto dotPos = realPath.rfind('.');
+                    if (dotPos != std::string::npos && rPartIdx > 1)
+                        rPath = realPath.substr(0, dotPos) + std::to_string(rPartIdx) + realPath.substr(dotPos);
+                    else
+                        rPath = realPath;
+                    std::ifstream rifs(rPath, std::ios::binary);
+                    if (!rifs) break;
+                    uint32_t rCount, rd1, rd2;
+                    if (!rifs.read((char*)&rCount, 4)) break;
+                    rifs.read((char*)&rd1, 4); rifs.read((char*)&rd2, 4);
+                    for (uint32_t i = 0; i < rCount; ++i) {
+                        char nameBuf[32]; uint32_t fSize;
+                        if (!rifs.read(nameBuf, 32)) break;
+                        if (!rifs.read((char*)&fSize, 4)) break;
+                        std::string fileName(nameBuf, strnlen(nameBuf, 32));
+                        boxIndex[fileName] = { rPath, (uint32_t)rifs.tellg(), fSize };
+                        rifs.seekg(fSize, std::ios::cur);
+                    }
+                    rPartIdx++;
+                    if (rPartIdx > 128) break;
+                }
+                // 固有WAVをインラインから登録 (curPath 内に直接格納)
+                uint32_t extraCount;
+                if (!ifs.read((char*)&extraCount, 4)) break;
+                for (uint32_t i = 0; i < extraCount; ++i) {
+                    char nameBuf[32]; uint32_t fSize;
+                    if (!ifs.read(nameBuf, 32)) break;
+                    if (!ifs.read((char*)&fSize, 4)) break;
+                    std::string fileName(nameBuf, strnlen(nameBuf, 32));
+                    boxIndex[fileName] = { curPath, (uint32_t)ifs.tellg(), fSize };
+                    ifs.seekg(fSize, std::ios::cur);
+                }
+                break; // REDIRECT+EXTRA もパート分割なし
+            }
+
+            // ── 通常boxwav ────────────────────────────────────────────
+            uint32_t count = magic; // magic == entry_count
+            uint32_t d1, d2;
+            ifs.read((char*)&d1, 4); ifs.read((char*)&d2, 4);
+            for (uint32_t i = 0; i < count; ++i) {
+                char nameBuf[32]; uint32_t fSize;
+                if (!ifs.read(nameBuf, 32)) break;
+                if (!ifs.read((char*)&fSize, 4)) break;
+                std::string fileName(nameBuf, strnlen(nameBuf, 32));
+                boxIndex[fileName] = { curPath, (uint32_t)ifs.tellg(), fSize };
+                ifs.seekg(fSize, std::ios::cur);
+            }
+
+            // 次パートへ
+            partIdx++;
+            if (partIdx > 128) break;
+            auto dotPos = pckPath.rfind('.');
+            if (dotPos == std::string::npos) break;
+            curPath = pckPath.substr(0, dotPos) + std::to_string(partIdx) + pckPath.substr(dotPos);
         }
-        if (!ifs) break;
+    };
 
-        uint32_t count, d1, d2;
-        if (!ifs.read((char*)&count, 4)) break;
-        ifs.read((char*)&d1, 4);
-        ifs.read((char*)&d2, 4);
+    // bmsonName に対応する boxwav をロード (パート1から開始)
+    std::string sep    = (rootPath.empty() || rootPath.back() == '/') ? "" : "/";
+    std::string base   = rootPath + sep + bmsonName;
+    std::string part1  = base + ".boxwav";
 
-        for (uint32_t i = 0; i < count; ++i) {
-            char nameBuf[32];
-            uint32_t fSize;
-            if (!ifs.read(nameBuf, 32)) break;
-            if (!ifs.read((char*)&fSize, 4)) break;
-
-            std::string fileName(nameBuf, strnlen(nameBuf, 32));
-            boxIndex[fileName] = { pckPath, (uint32_t)ifs.tellg(), fSize };
-            ifs.seekg(fSize, std::ios::cur);
+    // ★修正: パート1のみ exponential backoff でリトライ
+    {
+        std::ifstream probe;
+        for (int retry = 0; retry < 5; ++retry) {
+            probe.open(part1, std::ios::binary);
+            if (probe) break;
+            if (retry == 0) SDL_Delay(200);
+            else { SDL_Delay(200 << retry); }
         }
-        partIdx++;
-        if (partIdx > 128) break;
+        if (!probe) return; // boxwav が存在しない
     }
+
+    loadBoxFile(part1);
 }
 
 void SoundManager::loadSingleSound(const std::string& filename, const std::string& rootPath, const std::string& bmsonName) {
@@ -282,6 +387,8 @@ void SoundManager::cleanup() {
     clear();
     Mix_CloseAudio();
 }
+
+
 
 
 
