@@ -323,9 +323,8 @@ void NoteRenderer::renderUI(SDL_Renderer* ren, const BMSHeader& header, int fps,
 static double s_scratchAngle = 0.0;
 
 void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchStatus) {
-    // ★修正: LANE_WIDTH / SCRATCH_WIDTH がオプション画面で変更された場合に
-    //        即座に反映されるよう毎フレーム再計算する。計算コストは無視できる。
-    rebuildLaneLayout();
+    // レーンレイアウトは init() および notifyLayoutChanged() 呼び出し時のみ再計算。
+    // プレイ中にオプションは変更されないため毎フレームの再計算は不要。
     int totalWidth = ll.totalWidth;
     int startX     = ll.baseX;
     int laneHeight = 482;
@@ -475,8 +474,8 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
                 endDrawY = centerY + endTex->h / 2;
             }
 
-            if (endDrawY >= (int)Config::SUDDEN_PLUS && endDrawY <= judgeY + endTex->h) {
-                if (endTex && *endTex) {
+            if (endDrawY >= (int)Config::SUDDEN_PLUS && endTex && *endTex && endDrawY <= judgeY + endTex->h) {
+                if (true) {
                     SDL_Rect r = { x + 2, endDrawY - endTex->h, w - 4, endTex->h };
                     SDL_RenderCopy(ren, endTex->texture, NULL, &r);
                 }
@@ -514,7 +513,7 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
 // ================================================================
 
 void NoteRenderer::renderSuddenLift(SDL_Renderer* ren) {
-    rebuildLaneLayout();
+    // レーンレイアウトは init() および notifyLayoutChanged() 呼び出し時のみ再計算。
     int totalWidth = ll.totalWidth;
     int startX     = ll.baseX;
     int laneHeight = 482;
@@ -857,6 +856,7 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
 
 
 

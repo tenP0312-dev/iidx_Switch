@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <SDL2/SDL.h>
-#include "SoundManager.hpp"
 #include "NoteRenderer.hpp"
 #include "CommonTypes.hpp"
 #include "BMSData.hpp"
@@ -15,14 +14,14 @@ class BgaManager;
 
 class ScenePlay {
 public:
-    bool run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer, const std::string& bmsonPath);
+    bool run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath);
     const PlayStatus& getStatus() const { return status; }
     const BMSHeader& getHeader() const { return currentHeader; }
 
 private:
     // --- 内部処理用関数（重複を削除し、ここに集約） ---
-    bool processInput(double cur_ms, uint32_t now, SoundManager& snd, PlayEngine& engine);
-    void updateAssist(double cur_ms, PlayEngine& engine, SoundManager& snd);
+    bool processInput(double cur_ms, uint32_t now, PlayEngine& engine);
+    void updateAssist(double cur_ms, PlayEngine& engine);
     void renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine, 
                      BgaManager& bga, 
                      double cur_ms, int64_t cur_y, int fps, const BMSHeader& header, 
@@ -77,6 +76,7 @@ private:
 };
 
 #endif
+
 
 
 

@@ -215,7 +215,7 @@ int main(int argc, char* argv[]) {
                     SDL_Delay(500); 
 
                     // プレイ実行
-                    bool playFinishedNormal = scenePlay.run(ren, SoundManager::getInstance(), renderer, selectedPath);
+                    bool playFinishedNormal = scenePlay.run(ren, renderer, selectedPath);
                     PlayStatus status = scenePlay.getStatus();
 
                     if (playFinishedNormal) {
@@ -327,6 +327,7 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+
 
 
 

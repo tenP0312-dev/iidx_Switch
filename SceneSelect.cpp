@@ -349,7 +349,7 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
 
             if (btn == Config::SYS_BTN_OPTION) {
                 if (currentState == SelectState::SELECT_SONG) currentState = SelectState::EDIT_OPTION;
-                else { currentState = SelectState::SELECT_SONG; Config::save(); }
+                else { currentState = SelectState::SELECT_SONG; Config::save(); renderer.notifyLayoutChanged(); }
                 continue;
             }
 
@@ -632,6 +632,7 @@ bool SceneSelect::isOneMoreFolderSelected() const {
 
 void SceneSelect::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& renderer) {}
 void SceneSelect::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer) {}
+
 
 
 

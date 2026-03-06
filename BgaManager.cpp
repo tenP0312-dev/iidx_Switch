@@ -324,19 +324,9 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
     // デコードスレッドが最初のフレームを書くまで描画スキップ
     if (isVideoMode && !isReady.load(std::memory_order_acquire)) return;
 
-    // --- BGA 表示位置の計算 (レーン幅から動的に求める) ---
-    int sw = Config::SCRATCH_WIDTH;
-    int lw = Config::LANE_WIDTH;
-    int totalKeysWidth = 0;
-    for (int i = 1; i <= 7; i++)
-        totalKeysWidth += (i % 2 != 0) ? (int)(lw * 1.4) : lw;
-    int totalWidth = totalKeysWidth + sw;
-    int startX = (Config::PLAY_SIDE == 1)
-        ? 50
-        : (Config::SCREEN_WIDTH - totalWidth - 50);
-    int dynamicCenterX = (Config::PLAY_SIDE == 1)
-        ? (startX + totalWidth + (Config::SCREEN_WIDTH - startX - totalWidth) / 2)
-        : (startX / 2);
+    // BGA 表示中心 X は NoteRenderer::rebuildLaneLayout() が計算した値を
+    // setLayout() 経由で受け取って使う。ここで独自にレーン幅を再計算しない。
+    int dynamicCenterX = cachedBgaCenterX;
 
     // 描画サイズ: 高さ512に合わせてアスペクト比を保つ
     int renderH = 512, renderW = 512;
@@ -489,3 +479,4 @@ void BgaManager::clear() {
 }
 
 void BgaManager::cleanup() { clear(); }
+

@@ -83,8 +83,17 @@ public:
     void clear();
     void cleanup();
 
+    // NoteRenderer がレイアウトを確定した後に呼ぶ。
+    // BgaManager はレーン幅を自分で計算せず、ここで受け取った値のみを使う。
+    void setLayout(int bgaCenterX) {
+        cachedBgaCenterX = bgaCenterX;
+    }
+
 private:
     void videoWorker();
+
+    // NoteRenderer から受け取ったレイアウトキャッシュ
+    int cachedBgaCenterX = 640;
 
     // BMP/PNG テクスチャエントリ
     struct BgaTextureEntry {
@@ -145,3 +154,4 @@ private:
 };
 
 #endif // BGAMANAGER_HPP
+

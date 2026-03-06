@@ -127,6 +127,11 @@ public:
     int getLaneBaseX()      const { return ll.baseX; }
     int getLaneTotalWidth() const { return ll.totalWidth; }
     int getLaneCenterX()    const { return ll.baseX + ll.totalWidth / 2; }
+    int getBgaCenterX()     const { return ll.bgaCenterX; }
+
+    // オプション画面でレーン幅・スクラッチ幅が変更されたときに呼ぶ。
+    // init() 以外でレイアウトを更新できる唯一の窓口。
+    void notifyLayoutChanged() { rebuildLaneLayout(); }
 
 private:
     TTF_Font* fontSmall = nullptr;
@@ -181,6 +186,8 @@ private:
 };
 
 #endif // NOTERENDERER_HPP
+
+
 
 
 

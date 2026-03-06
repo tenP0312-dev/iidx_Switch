@@ -93,7 +93,11 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
     SDL_Event e;
 
     while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) return OptionState::FINISHED;
+        if (e.type == SDL_QUIT) {
+            Config::save();
+            renderer.notifyLayoutChanged();
+            return OptionState::FINISHED;
+        }
 
         // ★Mac/PC: キーボード → SYS_BTNに変換
         if (e.type == SDL_KEYDOWN && !e.key.repeat) {
@@ -130,9 +134,9 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     if (cursor == 1) { state = OptionState::WAITING_KEY; configStep = 0; lastConfigTime = currentTime; }
                     else if (cursor == 2) { state = OptionState::WAITING_KEY; configStep = 11; lastConfigTime = currentTime; }
                     else if ((cursor >= 4 && cursor <= 15) || (cursor >= 17 && cursor <= 22)) { state = OptionState::ADJUSTING_VALUE; updateItemList(); }
-                    else if (cursor == (int)items.size() - 1) { Config::save(); return OptionState::FINISHED; }
+                    else if (cursor == (int)items.size() - 1) { Config::save(); renderer.notifyLayoutChanged(); return OptionState::FINISHED; }
                 }
-                if (btn == Config::SYS_BTN_BACK) { Config::save(); return OptionState::FINISHED; }
+                if (btn == Config::SYS_BTN_BACK) { Config::save(); renderer.notifyLayoutChanged(); return OptionState::FINISHED; }
             }
             else if (state == OptionState::ADJUSTING_VALUE) {
                 bool changed = true;
@@ -373,6 +377,8 @@ void SceneOption::handleKeyConfig(int btn) {
         updateItemList();
     }
 }
+
+
 
 
 

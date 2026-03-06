@@ -7,17 +7,16 @@
 #include <SDL2/SDL.h>
 #include "CommonTypes.hpp"
 #include "BMSData.hpp"
-#include "SoundManager.hpp"
 #include "ChartProjector.hpp"
 #include "JudgeManager.hpp"
 
 class PlayEngine {
 public:
     void init(BMSData& data);
-    void update(double cur_ms, uint32_t now, SoundManager& snd);
+    void update(double cur_ms, uint32_t now);
     // isAuto: オートレーンからの打鍵。スコア・コンボ・ゲージを加算しない。
     // ただし ASSIST_OPTION==7（完全オート）の場合は呼び出し側が isAuto=false を渡す。
-    int processHit(int lane, double cur_ms, uint32_t now, SoundManager& snd, bool isAuto = false);
+    int processHit(int lane, double cur_ms, uint32_t now, bool isAuto = false);
     void processRelease(int lane, double cur_ms, uint32_t now);
     void forceFail();
 
@@ -58,6 +57,7 @@ private:
 };
 
 #endif
+
 
 
 

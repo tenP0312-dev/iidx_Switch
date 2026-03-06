@@ -41,8 +41,15 @@ public:
     uint64_t getMaxMemory() const { return MAX_WAV_MEMORY; }
 
     // --- ヘルパー: 文字列からのID生成（一貫性維持用） ---
+    // std::hash<std::string> はプラットフォーム・コンパイラ依存で値が変わるため使わない。
+    // PlayEngine::init() の FNV-1a と同じアルゴリズムで統一する。
     inline uint32_t getHash(const std::string& name) const {
-        return std::hash<std::string>{}(name);
+        uint32_t h = 2166136261u;
+        for (unsigned char c : name) {
+            h ^= c;
+            h *= 16777619u;
+        }
+        return h;
     }
 
 private:
@@ -81,6 +88,7 @@ private:
 };
 
 #endif
+
 
 
 

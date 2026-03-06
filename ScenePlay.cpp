@@ -1,5 +1,6 @@
 #include "ScenePlay.hpp"
 #include "PlayEngine.hpp"
+#include "SoundManager.hpp"
 #include "Config.hpp"
 #include "SceneResult.hpp"
 #include "BgaManager.hpp"
@@ -37,7 +38,7 @@ bool ScenePlay::isAutoLane(int lane) {
     return false;
 }
 
-void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine, SoundManager& snd) {
+void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine) {
     uint32_t now = SDL_GetTicks();
     const auto& notes = engine.getNotes();
     // 描画開始位置から探索を開始することで計算量を削減
@@ -51,7 +52,7 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine, SoundManager& sn
                 // ★修正: 完全オート(ASSIST_OPTION==7)はスコア・コンボ加算あり。
                 //        部分オート（スクラッチ/5kオート）はそのレーンを加算しない。
                 bool isPartialAuto = (Config::ASSIST_OPTION != 7);
-                int resultJudge = engine.processHit(n.lane, n.target_ms, now, snd, isPartialAuto);
+                int resultJudge = engine.processHit(n.lane, n.target_ms, now, isPartialAuto);
 
                 bool found = false;
                 for (size_t ei = 0; ei < effectCount; ++ei) {
@@ -85,7 +86,8 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine, SoundManager& sn
 }
 
 // --- メインロジック ---
-bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer, const std::string& bmsonPath) {
+bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath) {
+    SoundManager& snd = SoundManager::getInstance();
     // ─────────────────────────────────────────────
     // フェーズ 1: 前曲クリーンアップ
     // ─────────────────────────────────────────────
@@ -129,6 +131,7 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
 
     BgaManager bga;
     bga.init(data.bga_images.size());
+    bga.setLayout(renderer.getBgaCenterX()); // NoteRendererが計算した値をBgaManagerに渡す
     bga.setEvents(data.bga_events);
     bga.setLayerEvents(data.layer_events);
     bga.setPoorEvents(data.poor_events);
@@ -263,7 +266,7 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     while (waiting) {
         uint32_t now = SDL_GetTicks();
         // processInput を先に呼んでイベントを全消費、その中で HS/サドプラ変更も処理
-        if (!processInput(-2000.0, now, snd, engine)) return false;
+        if (!processInput(-2000.0, now, engine)) return false;
         // processInput 後に残ったフラグでDECIDEボタン確認
         // STARTボタンは待機中もHS/サドプラ変更に使うため競合しないよう分離
         // STARTボタン長押し中はDECIDEを無効化: HS変更ボタンにDECIDEが割り当たっていても誤爆しない
@@ -318,11 +321,11 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
 
         bga.syncTime(cur_ms - videoOffsetMs);
 
-        if (!processInput(cur_ms, now, snd, engine)) {
+        if (!processInput(cur_ms, now, engine)) {
             if (engine.getStatus().isFailed) playing = false;
             else { isAborted = true; playing = false; break; }
         }
-        updateAssist(cur_ms, engine, snd);
+        updateAssist(cur_ms, engine);
 
         // LN押下中ボム演出: GREAT/PGREAT 判定のLNを押下中、0.1秒ごとにボムを発生
         {
@@ -344,7 +347,7 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
             }
         }
 
-        engine.update(cur_ms + 10.0, now, snd);
+        engine.update(cur_ms + 10.0, now);
         // ★修正①: const ref で受け取ることで gaugeHistory (最大 2000 要素) の
         //          毎フレームコピーを完全に排除。432KB/秒のヒープコピー帯域を節約。
         const PlayStatus& s = engine.getStatus();
@@ -377,7 +380,7 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
                     // ★修正: FCループ中も入力処理を行う。
                     //        旧実装は SDL_PollEvent を呼ばず SDL_Delay(1) で待機するだけだったため
                     //        Switch の入力イベントキューが詰まりフリーズしていた。
-                    if (!processInput(cur_ms, nowFC, snd, engine)) break;
+                    if (!processInput(cur_ms, nowFC, engine)) break;
 
                     renderScene(ren, renderer, engine, bga, cur_ms, cur_y, fps, currentHeader, nowFC, 1.0);
                     if (gradTex) {
@@ -420,20 +423,24 @@ bool ScenePlay::run(SDL_Renderer* ren, SoundManager& snd, NoteRenderer& renderer
     // ★修正①: ループ終了後に一度だけコピー（FC の場合はループ内でコピー済みなのでスキップ）
     if (!fcEffectTriggered) status = engine.getStatus();
 
-    Config::save();
-
     if (gradTex) SDL_DestroyTexture(gradTex);
 
-    // フェードアウトしてからbga/sndを停止
-    if (!isAborted) {
-        int64_t cur_y_end = engine.getYFromMs(
-            (double)((int64_t)SDL_GetTicks() - (int64_t)start_ticks));
-        double cur_ms_end = (double)((int64_t)SDL_GetTicks() - (int64_t)start_ticks);
-        fadeOut(ren, renderer, engine, bga, cur_ms_end, cur_y_end, currentHeader, SDL_GetTicks(), 500);
+    // フェードアウト: 通常終了・強制終了ともにフェード中はBGA・ノーツを動かし続け、
+    // フェード完了後に bga/snd を停止する（先に止めると画面が固まって見栄えが悪い）
+    {
+        uint32_t fadeNow = SDL_GetTicks();
+        double cur_ms_end = (double)((int64_t)fadeNow - (int64_t)start_ticks);
+        int64_t cur_y_end = engine.getYFromMs(cur_ms_end);
+        fadeOut(ren, renderer, engine, bga, cur_ms_end, cur_y_end, currentHeader, fadeNow, 500);
     }
 
     snd.clear();
     bga.cleanup();
+
+    // Config::save() はすべての描画・音声処理が終わった後に実行する。
+    // fadeOut前に置くとsdmc:へのブロッキングI/O（数十〜数百ms）がフェードアウト直前に走り、
+    // プレイヤーに「演奏終了直後のフリーズ」として体感される。
+    Config::save();
     if (isAborted) return false; 
     return true;
 }
@@ -459,7 +466,7 @@ static int keyToJoyButton(SDL_Keycode key) {
 }
 
 // --- 入力処理 ---
-bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, PlayEngine& engine) {
+bool ScenePlay::processInput(double cur_ms, uint32_t now, PlayEngine& engine) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT) return false;
@@ -531,7 +538,7 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, SoundManager& snd, Pla
             if (lane != -1 && !isAutoLane(lane)) {
                 if (isDown) {
                     if (!engine.getStatus().isFailed && cur_ms >= -500.0) {
-                        int resultJudge = engine.processHit(lane, hit_ms, now, snd);
+                        int resultJudge = engine.processHit(lane, hit_ms, now);
 
                         // LN押下時の判定を保存 (押下中ボム演出で参照)
                         lnHitJudge[lane] = resultJudge;
@@ -579,12 +586,32 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
                        BgaManager& bga, double cur_ms, int64_t cur_y,
                        const BMSHeader& header, uint32_t baseNow, int durationMs) {
     SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
+
+    // ── スナップショットをオフスクリーンテクスチャに1回だけ描画 ──
+    // 毎フレーム renderScene を呼ぶと描画内容のブレでちらつきが生じるため、
+    // フェード開始時点の画面を固定してその上から黒矩形をフェードさせる。
+    SDL_Texture* snap = SDL_CreateTexture(ren,
+        SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+        Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT);
+    if (snap) {
+        SDL_SetRenderTarget(ren, snap);
+        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
+        SDL_SetRenderTarget(ren, nullptr);
+    }
+
     uint32_t start = SDL_GetTicks();
     while (true) {
-        uint32_t now = SDL_GetTicks();
-        float t = std::min(1.0f, (float)(now - start) / (float)durationMs);
-        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
-        // プレイ画面の上に黒矩形を (1-t) の不透明度で重ねる
+        uint32_t frameStart = SDL_GetTicks();
+        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
+
+        if (snap) {
+            SDL_RenderCopy(ren, snap, nullptr, nullptr);
+        } else {
+            // スナップショット作成失敗時は従来通り毎フレーム描画
+            renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
+        }
+
+        // 黒矩形を (1-t) の不透明度で重ねる（黒→透明へ遷移 = フェードイン）
         Uint8 alpha = (Uint8)((1.0f - t) * 255);
         if (alpha > 0) {
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -598,7 +625,12 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
         if (!appletMainLoop()) break;
 #endif
         if (t >= 1.0f) break;
+        // VSync が効いていない場合でも約16ms/frame を下限として保証（CPU 100% 防止）
+        uint32_t elapsed = SDL_GetTicks() - frameStart;
+        if (elapsed < 16) SDL_Delay(16 - elapsed);
     }
+
+    if (snap) SDL_DestroyTexture(snap);
 }
 
 void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
@@ -607,10 +639,17 @@ void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& e
     SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
     uint32_t start = SDL_GetTicks();
     while (true) {
-        uint32_t now = SDL_GetTicks();
-        float t = std::min(1.0f, (float)(now - start) / (float)durationMs);
-        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 1.0);
-        // プレイ画面の上に黒矩形を t の不透明度で重ねる
+        uint32_t frameStart = SDL_GetTicks();
+        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
+
+        // フェード中も時間を進めてライブ描画（BGA・ノーツが動き続ける）
+        // cur_ms / cur_y は呼び出し時点の値を起点に、経過時間で更新する
+        double live_ms = cur_ms + (double)(frameStart - baseNow);
+        int64_t live_y  = engine.getYFromMs(live_ms);
+        bga.syncTime(live_ms);
+        renderScene(ren, renderer, engine, bga, live_ms, live_y, 0, header, frameStart, 1.0);
+
+        // 黒矩形を t の不透明度で重ねる（透明→黒へ遷移 = フェードアウト）
         Uint8 alpha = (Uint8)(t * 255);
         if (alpha > 0) {
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -624,6 +663,9 @@ void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& e
         if (!appletMainLoop()) break;
 #endif
         if (t >= 1.0f) break;
+        // VSync が効いていない場合でも約16ms/frame を下限として保証（CPU 100% 防止）
+        uint32_t elapsed = SDL_GetTicks() - frameStart;
+        if (elapsed < 16) SDL_Delay(16 - elapsed);
     }
 }
 

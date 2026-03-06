@@ -1,8 +1,10 @@
 #include "PlayEngine.hpp"
+#include "SoundManager.hpp"
 #include "Config.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <array>
 #include <random>
 #include <map>
 #include <set>
@@ -74,8 +76,16 @@ void PlayEngine::init(BMSData& data) {
     std::vector<TempNote> tempNotes;
     tempNotes.reserve(data.header.totalNotes * 2);
 
+    // FNV-1a (32bit) ラムダ。SoundManager::getHash と同一アルゴリズムで統一。
+    // std::hash<std::string> はプラットフォーム依存のため使わない。
+    auto fnv1a32_sound = [](const std::string& s) -> uint32_t {
+        uint32_t h = 2166136261u;
+        for (unsigned char c : s) { h ^= c; h *= 16777619u; }
+        return h;
+    };
+
     for (const auto& ch : data.sound_channels) {
-        uint32_t sId = std::hash<std::string>{}(ch.name);
+        uint32_t sId = fnv1a32_sound(ch.name);
         for (const auto& n : ch.notes) {
             bool isBGM = (n.x < 1 || n.x > 8);
             tempNotes.push_back({n.y, n.l, (int)n.x, sId, isBGM});
@@ -182,13 +192,17 @@ void PlayEngine::init(BMSData& data) {
         // 直前に置いたレーンを記録（パス3の最低限縦連回避用）
         int lastChosenLane = -1;
 
+        // ループ外で一度だけ確保。std::array はスタック上に置かれ、malloc/free が走らない。
+        std::array<int, 7> lanes = {1, 2, 3, 4, 5, 6, 7};
+
         for (size_t idx : bgmCandidates) {
             const TempNote& src = tempNotes[idx];
             int64_t y = src.y;
             uint8_t& ymask = moreUsedMask[y];
 
             // レーンをuse countの少ない順に並べ、均等分散を促進
-            std::vector<int> lanes = {1, 2, 3, 4, 5, 6, 7};
+            // 毎回 {1,2,3,4,5,6,7} にリセットしてからシャッフルする
+            std::iota(lanes.begin(), lanes.end(), 1);
             std::shuffle(lanes.begin(), lanes.end(), g);
             std::stable_sort(lanes.begin(), lanes.end(), [&](int a, int b){
                 return laneUseCount[a] < laneUseCount[b];
@@ -427,7 +441,8 @@ void PlayEngine::init(BMSData& data) {
     lastHistoryUpdateMs = -1000.0;
 }
 
-void PlayEngine::update(double cur_ms, uint32_t now, SoundManager& snd) {
+void PlayEngine::update(double cur_ms, uint32_t now) {
+    SoundManager& snd = SoundManager::getInstance();
     if (status.isFailed) return;
 
     if (cur_ms >= 0 && cur_ms - lastHistoryUpdateMs >= 200.0) {
@@ -510,7 +525,8 @@ void PlayEngine::update(double cur_ms, uint32_t now, SoundManager& snd) {
     }
 }
 
-int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, SoundManager& snd, bool isAuto) {
+int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
+    SoundManager& snd = SoundManager::getInstance();
     if (status.isFailed || lane < 1 || lane > 8) return 0;
 
     bool hitSuccess = false;
@@ -716,6 +732,8 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+
 
 
 
