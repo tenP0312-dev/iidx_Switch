@@ -1,6 +1,7 @@
 #include "SceneSelect.hpp"
 #include "SceneSelectView.hpp"
 #include "BmsonLoader.hpp"
+#include "BmsLoader.hpp"
 #include "Config.hpp"
 #include "ScoreManager.hpp"
 #include "SceneDecision.hpp"
@@ -215,8 +216,6 @@ void SceneSelect::init(bool forceScan, SDL_Renderer* ren, NoteRenderer& renderer
         g_currentDirPath = rootPath;
     }
     
-    SoundManager::getInstance().init();
-
     if (songCache.empty() || forceScan) {
         prepareSongList(forceScan, ren, renderer, currentStage);
     } else {
@@ -448,7 +447,9 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
                         lastSelectedWasExtra = (currentDir.find("EXTRA") != std::string::npos || currentDir.find("Extra") != std::string::npos);
                         lastSelectedWasOneMore = (currentDir.find("ONEMORE") != std::string::npos || currentDir.find("OneMore") != std::string::npos);
 
-                        BMSHeader header = BmsonLoader::loadHeader(fullPath); 
+                        BMSHeader header = BmsLoader::isBmsFile(fullPath)
+                            ? BmsLoader::loadHeader(fullPath)
+                            : BmsonLoader::loadHeader(fullPath);
                         SceneDecision decision;
                         if (decision.run(ren, renderer, header)) {
                             return fullPath; 
@@ -606,7 +607,9 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
                 if (!entry.previewPath.empty()) {
                     SoundManager::getInstance().playPreview(entry.previewPath);
                 } else {
-                    BMSHeader header = BmsonLoader::loadHeader(entry.filename);
+                    BMSHeader header = BmsLoader::isBmsFile(entry.filename)
+                        ? BmsLoader::loadHeader(entry.filename)
+                        : BmsonLoader::loadHeader(entry.filename);
                     if (!header.preview.empty()) {
                         fs::path root = fs::path(entry.filename).parent_path();
                         SoundManager::getInstance().playPreview((root / header.preview).string());
@@ -632,6 +635,10 @@ bool SceneSelect::isOneMoreFolderSelected() const {
 
 void SceneSelect::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& renderer) {}
 void SceneSelect::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer) {}
+
+
+
+
 
 
 

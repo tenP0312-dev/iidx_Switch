@@ -50,6 +50,7 @@ int main(int argc, char* argv[]) {
     Logger::init(Config::ROOT_PATH + "log.txt");
     LOG_INFO("main", "=== App Start ===");
     LOG_INFO("main", "ROOT_PATH: %s", Config::ROOT_PATH.c_str());
+    LOG_INFO("main", "heap at startup: %lluMB", Logger::heapUsedMB());
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
         return -1;
     }
@@ -219,8 +220,12 @@ int main(int argc, char* argv[]) {
                     SDL_Delay(500); 
 
                     // プレイ実行
+                    LOG_INFO("main", "=== PLAY start stage=%d path='%s' heap=%lluMB ===",
+                             effectiveStage, selectedPath.c_str(), Logger::heapUsedMB());
                     bool playFinishedNormal = scenePlay.run(ren, renderer, selectedPath);
                     PlayStatus status = scenePlay.getStatus();
+                    LOG_INFO("main", "=== PLAY end normal=%d heap=%lluMB ===",
+                             playFinishedNormal ? 1 : 0, Logger::heapUsedMB());
 
                     if (playFinishedNormal) {
                         // リザルト表示
@@ -234,7 +239,9 @@ int main(int argc, char* argv[]) {
                             if (status.isFailed) {
                                 sceneGameOver.init();
                                 currentState = AppState::GAMEOVER;
+                                LOG_INFO("main", "stage=%d FAILED -> GAMEOVER", globalCurrentStage);
                             } else {
+                                int prevStage = globalCurrentStage;
                                 if (globalCurrentStage < 3) {
                                     globalCurrentStage++;
                                 } 
@@ -254,6 +261,9 @@ int main(int argc, char* argv[]) {
                                 else if (globalCurrentStage == 5) {
                                     sceneGameOver.init();
                                     currentState = AppState::GAMEOVER;
+                                }
+                                if (prevStage != globalCurrentStage) {
+                                    LOG_INFO("main", "stage advance: %d -> %d", prevStage, globalCurrentStage);
                                 }
                                 
                                 if (currentState == AppState::SELECT) {
@@ -331,6 +341,8 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+
+
 
 
 

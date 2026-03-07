@@ -1,5 +1,6 @@
 #include "SongManager.hpp"
 #include "BmsonLoader.hpp"
+#include "BmsLoader.hpp"
 #include "Config.hpp"
 #include "ScoreManager.hpp"
 #include "SceneSelect.hpp" 
@@ -182,6 +183,56 @@ void SongManager::scanBmsonRecursive(const std::string& path, std::vector<SongEn
                 renderer.drawText(ren, "$ _", 40, lineY + 20, gray, false, false);
                 SDL_RenderPresent(ren);
             }
+        } else if (BmsLoader::isBmsFile(name)) {
+            BMSHeader h = BmsLoader::loadHeader(fullPath);
+
+            // DP (.bms player=3) と 5Key は除外
+            if (h.modeHint == "beat-14k" || !h.is7Key) continue;
+
+            BestScore b = ScoreManager::loadScore(h.title, h.chartName, (int)h.total);
+
+            SongEntry entry = {
+                fullPath, h.title, h.subtitle, h.artist, h.chartName,
+                h.bpm, h.level, h.total,
+                h.totalNotes,
+                b.clearType, b.exScore, b.maxCombo, b.rank, h.modeHint
+            };
+            songCache.push_back(entry);
+
+            if (ren) {
+                SDL_SetRenderDrawColor(ren, 15, 15, 15, 255);
+                SDL_RenderClear(ren);
+
+                SDL_Color gray  = {200, 200, 200, 255};
+                SDL_Color green = {50, 205, 50, 255};
+                SDL_Color yellow = {240, 230, 140, 255};
+
+                int lineY = 40;
+                auto drawLog = [&](const std::string& text, SDL_Color color) {
+                    renderer.drawText(ren, text, 40, lineY, color, false, false);
+                    lineY += 28;
+                };
+
+                drawLog("tenP@SWITCH-DEV:/$ find ./songs -name \"*.bm[sel]\"", gray);
+                std::string progress = "Scanning files... [" + std::to_string(songCache.size()) + " objects found]";
+                drawLog(progress, gray);
+                drawLog("--------------------------------------------------", gray);
+                drawLog("Parsing: " + name, yellow);
+
+                std::string shortPath = fullPath;
+                if (shortPath.length() > 90) shortPath = "..." + shortPath.substr(shortPath.length() - 87);
+                drawLog("  Path: " + shortPath, gray);
+                drawLog("  Title: " + h.title, gray);
+                drawLog("  Artist: " + h.artist, gray);
+
+                char stats[128];
+                sprintf(stats, "  BPM: %.2f | Level: %d | Notes: %d", h.bpm, h.level, (int)h.totalNotes);
+                drawLog(stats, gray);
+                drawLog("  Status: OK", green);
+
+                renderer.drawText(ren, "$ _", 40, lineY + 20, gray, false, false);
+                SDL_RenderPresent(ren);
+            }
         }
     }
     closedir(dir);
@@ -345,6 +396,8 @@ void SongManager::syncDifficulty(std::vector<SongGroup>& songGroups, const std::
         group.currentDiffIdx = bestMatchIdx;
     }
 }
+
+
 
 
 

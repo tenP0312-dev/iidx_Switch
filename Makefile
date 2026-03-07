@@ -8,7 +8,7 @@ SOURCES     := main.cpp BmsonLoader.cpp SoundManager.cpp NoteRenderer.cpp \
                SceneSelect.cpp ScenePlay.cpp SceneResult.cpp PlayEngine.cpp ScoreManager.cpp \
                SceneTitle.cpp SceneDecision.cpp SceneSelectView.cpp SongManager.cpp \
                ChartProjector.cpp JudgeManager.cpp SceneOption.cpp SceneModeSelect.cpp \
-               SceneSideSelect.cpp VirtualFolderManager.cpp BgaManager.cpp
+               SceneSideSelect.cpp VirtualFolderManager.cpp BgaManager.cpp BmsLoader.cpp
 
 # --- devkitProのパス設定 (自動取得) ---
 ifeq ($(strip $(DEVKITPRO)),)

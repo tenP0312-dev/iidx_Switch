@@ -5,6 +5,7 @@
 #include "SceneResult.hpp"
 #include "BgaManager.hpp"
 #include "Logger.hpp"
+#include "BmsLoader.hpp"
 #include <cmath>
 #include <algorithm>
 #include <SDL2/SDL_image.h> 
@@ -93,10 +94,6 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     // ─────────────────────────────────────────────
     // フェーズ 1: 前曲クリーンアップ
     // ─────────────────────────────────────────────
-    {
-        BgaManager tempBga;
-        tempBga.cleanup();
-    }
     LOG_INFO("ScenePlay", "Phase1: snd.clear() start");
     snd.clear();
     LOG_INFO("ScenePlay", "Phase1: snd.clear() done");
@@ -112,19 +109,26 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
         SDL_RenderClear(ren);
         SDL_RenderPresent(ren);
     }
-    BMSData data = BmsonLoader::load(bmsonPath, [&](float /*progress*/) {
-        SDL_Event e; while (SDL_PollEvent(&e));
-    });
+    BMSData data;
+    if (BmsLoader::isBmsFile(bmsonPath)) {
+        data = BmsLoader::load(bmsonPath, [&](float /*progress*/) {
+            SDL_Event e; while (SDL_PollEvent(&e));
+        });
+    } else {
+        data = BmsonLoader::load(bmsonPath, [&](float /*progress*/) {
+            SDL_Event e; while (SDL_PollEvent(&e));
+        });
+    }
 
     if (data.sound_channels.empty()) {
         LOG_WARN("ScenePlay", "sound_channels empty, aborting");
         return true;
     }
-    LOG_INFO("ScenePlay", "Phase2: bmson loaded: title='%s' channels=%zu bpm=%.1f resolution=%d",
+    LOG_INFO("ScenePlay", "Phase2: chart loaded: title='%s' channels=%zu bpm=%.1f resolution=%d",
              data.header.title.c_str(), data.sound_channels.size(),
              data.header.bpm, data.header.resolution);
 
-    // JSON DOM をここで破棄させる（スコープ外に出ているため自動解放済み）
+    // パース完了後にデータ構造のスコープを整理（bmsonの場合はJSON DOMが既に解放済み）
     SDL_Delay(100);
 
     // ─────────────────────────────────────────────
@@ -334,10 +338,22 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
             gradTex = SDL_CreateTextureFromSurface(ren, surf);
             SDL_FreeSurface(surf);
         }
+        // gradTex は FC エフェクト用。失敗してもゲームは続行できるが
+        // 失敗が続く場合は VRAM 不足や SDL_Renderer 破損のサインになる。
+        if (!gradTex) LOG_WARN("ScenePlay", "gradTex creation failed (FC effect disabled): %s", SDL_GetError());
     }
 
+    bool firstFrame = true;
     while (playing) {
         uint32_t now = SDL_GetTicks();
+
+        // Play loop の最初のフレームに入れたことを記録する。
+        // ここに到達せずクラッシュした場合はその直前のログ（gradTex 行など）が手がかりになる。
+        if (firstFrame) {
+            LOG_INFO("ScenePlay", "Play loop first frame: now=%u", now);
+            firstFrame = false;
+        }
+
         double cur_ms = (double)((int64_t)now - (int64_t)start_ticks);
 
         bga.syncTime(cur_ms - videoOffsetMs);
@@ -623,6 +639,11 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
         SDL_SetRenderTarget(ren, snap);
         renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
         SDL_SetRenderTarget(ren, nullptr);
+    } else {
+        // SDL_TEXTUREACCESS_TARGET は VRAM 依存。失敗時は毎フレーム描画にフォールバックするが
+        // VRAM 残量不足のサインとして記録しておく。
+        LOG_WARN("ScenePlay", "fadeIn: SDL_CreateTexture(TARGET) failed, fallback to per-frame render: %s",
+                 SDL_GetError());
     }
 
     uint32_t start = SDL_GetTicks();

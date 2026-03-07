@@ -85,8 +85,9 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                         if (!rifs.read(nameBuf, 32)) break;
                         if (!rifs.read((char*)&fSize, 4)) break;
                         std::string fileName(nameBuf, strnlen(nameBuf, 32));
-                        boxIndex[fileName] = { rPath, (uint32_t)rifs.tellg(), fSize };
-                        rifs.seekg(fSize, std::ios::cur);
+                        boxIndex[fileName] = { rPath, (uint64_t)rifs.tellg(), fSize };
+                        rifs.seekg((std::streamoff)fSize, std::ios::cur);
+                        if (!rifs) { rifs.clear(); break; }
                     }
                     rPartIdx++;
                     if (rPartIdx > 128) break;
@@ -121,8 +122,9 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                         if (!rifs.read(nameBuf, 32)) break;
                         if (!rifs.read((char*)&fSize, 4)) break;
                         std::string fileName(nameBuf, strnlen(nameBuf, 32));
-                        boxIndex[fileName] = { rPath, (uint32_t)rifs.tellg(), fSize };
-                        rifs.seekg(fSize, std::ios::cur);
+                        boxIndex[fileName] = { rPath, (uint64_t)rifs.tellg(), fSize };
+                        rifs.seekg((std::streamoff)fSize, std::ios::cur);
+                        if (!rifs) { rifs.clear(); break; }
                     }
                     rPartIdx++;
                     if (rPartIdx > 128) break;
@@ -135,8 +137,9 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                     if (!ifs.read(nameBuf, 32)) break;
                     if (!ifs.read((char*)&fSize, 4)) break;
                     std::string fileName(nameBuf, strnlen(nameBuf, 32));
-                    boxIndex[fileName] = { curPath, (uint32_t)ifs.tellg(), fSize };
-                    ifs.seekg(fSize, std::ios::cur);
+                    boxIndex[fileName] = { curPath, (uint64_t)ifs.tellg(), fSize };
+                    ifs.seekg((std::streamoff)fSize, std::ios::cur);
+                    if (!ifs) { ifs.clear(); break; }
                 }
                 break; // REDIRECT+EXTRA もパート分割なし
             }
@@ -152,8 +155,9 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                 if (!ifs.read(nameBuf, 32)) break;
                 if (!ifs.read((char*)&fSize, 4)) break;
                 std::string fileName(nameBuf, strnlen(nameBuf, 32));
-                boxIndex[fileName] = { curPath, (uint32_t)ifs.tellg(), fSize };
-                ifs.seekg(fSize, std::ios::cur);
+                boxIndex[fileName] = { curPath, (uint64_t)ifs.tellg(), fSize };
+                ifs.seekg((std::streamoff)fSize, std::ios::cur);
+                if (!ifs) { ifs.clear(); break; }
             }
 
             // 次パートへ
@@ -208,16 +212,28 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
 
         std::ifstream ifs(entry.pckPath, std::ios::binary);
         if (ifs) {
-            // ★修正: SDL_malloc → loadBuffer (再利用バッファ) に変更。
-            //        SDL_malloc の NULL 返却チェック不要になり、
-            //        ヒープフラグメンテーションも発生しない。
             if (loadBuffer.size() < entry.size)
                 loadBuffer.resize(entry.size);
 
-            ifs.seekg(entry.offset);
+            ifs.seekg((std::streamoff)entry.offset);
+            if (!ifs) {
+                LOG_ERROR("SoundManager", "loadSingleSound seekg failed: '%s' offset=%llu",
+                          filename.c_str(), (unsigned long long)entry.offset);
+                return;
+            }
             ifs.read((char*)loadBuffer.data(), entry.size);
+            std::streamsize readBytes = ifs.gcount();
+            if (readBytes != (std::streamsize)entry.size) {
+                LOG_ERROR("SoundManager", "loadSingleSound read SHORT: '%s' expected=%u got=%lld",
+                          filename.c_str(), entry.size, (long long)readBytes);
+                return;
+            }
 
-            SDL_RWops* rw = SDL_RWFromMem(loadBuffer.data(), (int)entry.size);
+            // loadBuffer.data() を使い終わるまで resize しないよう、
+            // ローカルポインタとサイズを確定してから RWops を作る
+            uint8_t* ptr  = loadBuffer.data();
+            int       sz  = (int)entry.size; // entry.size は uint32_t なので int で安全
+            SDL_RWops* rw = SDL_RWFromMem(ptr, sz);
             Mix_Chunk* chunk = Mix_LoadWAV_RW(rw, 0);
             SDL_RWclose(rw);
 
@@ -325,21 +341,34 @@ void SoundManager::loadSoundsInBulk(const std::vector<std::string>& filenames,
             if (loadBuffer.size() < entry.size)
                 loadBuffer.resize(entry.size);
 
-            ifs.seekg(entry.offset);
+            ifs.seekg((std::streamoff)entry.offset);
+            if (!ifs) {
+                LOG_ERROR("SoundManager", "bulk seekg failed: '%s' offset=%llu",
+                          name.c_str(), (unsigned long long)entry.offset);
+                ifs.clear();
+                processedCount++;
+                if (onProgress) onProgress(processedCount, name);
+                continue;
+            }
             ifs.read((char*)loadBuffer.data(), entry.size);
 
             // read の実際の読み取りバイト数を確認（部分読み取り検出）
             std::streamsize readBytes = ifs.gcount();
             if (readBytes != (std::streamsize)entry.size) {
-                LOG_ERROR("SoundManager", "bulk read SHORT: '%s' expected=%u got=%lld offset=%u",
-                          name.c_str(), entry.size, (long long)readBytes, entry.offset);
+                LOG_ERROR("SoundManager", "bulk read SHORT: '%s' expected=%u got=%lld offset=%llu",
+                          name.c_str(), entry.size, (long long)readBytes,
+                          (unsigned long long)entry.offset);
                 ifs.clear(); // eofbit/failbitをリセットして次のseekgを有効にする
                 processedCount++;
                 if (onProgress) onProgress(processedCount, name);
                 continue;
             }
 
-            SDL_RWops* rwIndiv = SDL_RWFromMem(loadBuffer.data(), (int)entry.size);
+            // loadBuffer.data() を使い終わるまで resize しないよう、
+            // ローカルポインタとサイズを確定してから RWops を作る
+            uint8_t* ptr    = loadBuffer.data();
+            int       sz    = (int)entry.size; // entry.size は uint32_t なので int で安全
+            SDL_RWops* rwIndiv = SDL_RWFromMem(ptr, sz);
             Mix_Chunk* chunk = Mix_LoadWAV_RW(rwIndiv, 0);
             SDL_RWclose(rwIndiv);
 
@@ -400,8 +429,7 @@ void SoundManager::playByName(const std::string& name) {
 }
 
 void SoundManager::playPreview(const std::string& fullPath) {
-    static std::string lastPath = "";
-    if (lastPath == fullPath && currentPreviewChunk != nullptr) return;
+    if (lastPreviewPath == fullPath && currentPreviewChunk != nullptr) return;
     stopPreview();
 
     SDL_RWops* rw = SDL_RWFromFile(fullPath.c_str(), "rb");
@@ -412,7 +440,7 @@ void SoundManager::playPreview(const std::string& fullPath) {
         Mix_PlayChannel(255, previewChunk, -1);
         Mix_Volume(255, 80);
         currentPreviewChunk = previewChunk;
-        lastPath = fullPath;
+        lastPreviewPath = fullPath;
     }
 }
 
@@ -444,9 +472,15 @@ void SoundManager::clear() {
     boxIndex.clear();
     currentTotalMemory = 0;
     nextVictim = 0;
+    lastPreviewPath.clear(); // 次曲でplayPreview()が確実に再ロードされるようにリセット
+    // loadBuffer を解放して曲間にメモリを戻す（次の曲でまた必要なら再確保される）
+    std::vector<uint8_t>().swap(loadBuffer);
     sounds.reserve(4000);
-
-    Mix_AllocateChannels(256);
+    // ★ Mix_AllocateChannels(256) は init() の1回だけ呼べば十分。
+    //    clear() のたびに呼ぶと SDL_mixer の内部チャンネル配列が realloc され、
+    //    オーディオコールバックスレッドとのロック競合で 50〜70ms のスパイクが発生する。
+    //    さらに長時間稼働で realloc を繰り返すとヒープが断片化し、
+    //    最終的に SDL_mixer 内部状態が壊れてクラッシュする原因になる。
     LOG_INFO("SoundManager", "clear() done");
 }
 
@@ -454,6 +488,8 @@ void SoundManager::cleanup() {
     clear();
     Mix_CloseAudio();
 }
+
+
 
 
 

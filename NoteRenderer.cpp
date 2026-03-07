@@ -1,5 +1,6 @@
 #include "NoteRenderer.hpp"
 #include "Config.hpp"
+#include "Logger.hpp"
 #include <cmath>
 #include <vector>
 #include <string>
@@ -57,7 +58,8 @@ void NoteRenderer::loadAndCache(SDL_Renderer* ren, TextureRegion& region, const 
         region.h = s->h;
         SDL_FreeSurface(s);
     } else {
-        printf("NoteRenderer::loadAndCache failed: %s\n", path.c_str());
+        // printf ではログファイルに出ないため LOG_ERROR に統一
+        LOG_ERROR("NoteRenderer", "loadAndCache failed: %s (IMG: %s)", path.c_str(), IMG_GetError());
     }
 }
 
@@ -68,78 +70,97 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     // TTF_OpenFont は TTC に対して index=0 相当だが Switch で失敗するケースがあるため明示指定
     fontSmall = TTF_OpenFontIndex(Config::FONT_PATH.c_str(), 24, 0);
     fontBig   = TTF_OpenFontIndex(Config::FONT_PATH.c_str(), 48, 0);
+    if (!fontSmall || !fontBig) {
+        LOG_ERROR("NoteRenderer", "init: font load failed path='%s' small=%s big=%s",
+                  Config::FONT_PATH.c_str(),
+                  fontSmall ? "OK" : "FAIL",
+                  fontBig   ? "OK" : "FAIL");
+    }
 
     std::string s = Config::ROOT_PATH + "Skin/";
+    int skinOk = 0, skinFail = 0;
+    // スキンロード結果を集計するラムダ（失敗時は loadAndCache 内で LOG_ERROR が出る）
+    auto track = [&](TextureRegion& r) { if (r) skinOk++; else skinFail++; };
 
-    loadAndCache(ren, texBackground, s + "Flame_BG.png");
-    loadAndCache(ren, texNoteWhite,  s + "note_white.png");
-    loadAndCache(ren, texNoteBlue,   s + "note_blue.png");
-    loadAndCache(ren, texNoteRed,    s + "note_red.png");
+    loadAndCache(ren, texBackground, s + "Flame_BG.png");       track(texBackground);
+    loadAndCache(ren, texNoteWhite,  s + "note_white.png");      track(texNoteWhite);
+    loadAndCache(ren, texNoteBlue,   s + "note_blue.png");       track(texNoteBlue);
+    loadAndCache(ren, texNoteRed,    s + "note_red.png");        track(texNoteRed);
 
-    loadAndCache(ren, texNoteWhite_LN,       s + "note_white_ln.png");
-    loadAndCache(ren, texNoteWhite_LN_Active1, s + "note_white_ln_active1.png");
-    loadAndCache(ren, texNoteWhite_LN_Active2, s + "note_white_ln_active2.png");
-    loadAndCache(ren, texNoteBlue_LN,        s + "note_blue_ln.png");
-    loadAndCache(ren, texNoteBlue_LN_Active1,  s + "note_blue_ln_active1.png");
-    loadAndCache(ren, texNoteBlue_LN_Active2,  s + "note_blue_ln_active2.png");
-    loadAndCache(ren, texNoteRed_LN,         s + "note_red_ln.png");
-    loadAndCache(ren, texNoteRed_LN_Active1,   s + "note_red_ln_active1.png");
-    loadAndCache(ren, texNoteRed_LN_Active2,   s + "note_red_ln_active2.png");
+    loadAndCache(ren, texNoteWhite_LN,       s + "note_white_ln.png");         track(texNoteWhite_LN);
+    loadAndCache(ren, texNoteWhite_LN_Active1, s + "note_white_ln_active1.png"); track(texNoteWhite_LN_Active1);
+    loadAndCache(ren, texNoteWhite_LN_Active2, s + "note_white_ln_active2.png"); track(texNoteWhite_LN_Active2);
+    loadAndCache(ren, texNoteBlue_LN,        s + "note_blue_ln.png");          track(texNoteBlue_LN);
+    loadAndCache(ren, texNoteBlue_LN_Active1,  s + "note_blue_ln_active1.png"); track(texNoteBlue_LN_Active1);
+    loadAndCache(ren, texNoteBlue_LN_Active2,  s + "note_blue_ln_active2.png"); track(texNoteBlue_LN_Active2);
+    loadAndCache(ren, texNoteRed_LN,         s + "note_red_ln.png");           track(texNoteRed_LN);
+    loadAndCache(ren, texNoteRed_LN_Active1,   s + "note_red_ln_active1.png");  track(texNoteRed_LN_Active1);
+    loadAndCache(ren, texNoteRed_LN_Active2,   s + "note_red_ln_active2.png");  track(texNoteRed_LN_Active2);
 
-    loadAndCache(ren, texNoteWhite_LNS, s + "note_white_lns.png");
-    loadAndCache(ren, texNoteWhite_LNE, s + "note_white_lne.png");
-    loadAndCache(ren, texNoteBlue_LNS,  s + "note_blue_lns.png");
-    loadAndCache(ren, texNoteBlue_LNE,  s + "note_blue_lne.png");
-    loadAndCache(ren, texNoteRed_LNS,   s + "note_red_lns.png");
-    loadAndCache(ren, texNoteRed_LNE,   s + "note_red_lne.png");
-    loadAndCache(ren, texNoteRed_BSS_S,   s + "note_red_bss_s.png");
-    loadAndCache(ren, texNoteRed_BSS_Mid, s + "note_red_bss_middle.png");
-    loadAndCache(ren, texNoteRed_BSS_E,   s + "note_red_bss_e.png");
+    loadAndCache(ren, texNoteWhite_LNS, s + "note_white_lns.png"); track(texNoteWhite_LNS);
+    loadAndCache(ren, texNoteWhite_LNE, s + "note_white_lne.png"); track(texNoteWhite_LNE);
+    loadAndCache(ren, texNoteBlue_LNS,  s + "note_blue_lns.png");  track(texNoteBlue_LNS);
+    loadAndCache(ren, texNoteBlue_LNE,  s + "note_blue_lne.png");  track(texNoteBlue_LNE);
+    loadAndCache(ren, texNoteRed_LNS,   s + "note_red_lns.png");   track(texNoteRed_LNS);
+    loadAndCache(ren, texNoteRed_LNE,   s + "note_red_lne.png");   track(texNoteRed_LNE);
+    loadAndCache(ren, texNoteRed_BSS_S,   s + "note_red_bss_s.png");      track(texNoteRed_BSS_S);
+    loadAndCache(ren, texNoteRed_BSS_Mid, s + "note_red_bss_middle.png"); track(texNoteRed_BSS_Mid);
+    loadAndCache(ren, texNoteRed_BSS_E,   s + "note_red_bss_e.png");      track(texNoteRed_BSS_E);
 
-    loadAndCache(ren, texKeybeamWhite, s + "beam_white.png");
-    loadAndCache(ren, texKeybeamBlue,  s + "beam_blue.png");
-    loadAndCache(ren, texKeybeamRed,   s + "beam_red.png");
+    loadAndCache(ren, texKeybeamWhite, s + "beam_white.png"); track(texKeybeamWhite);
+    loadAndCache(ren, texKeybeamBlue,  s + "beam_blue.png");  track(texKeybeamBlue);
+    loadAndCache(ren, texKeybeamRed,   s + "beam_red.png");   track(texKeybeamRed);
 
-    loadAndCache(ren, texJudgeAtlas,  s + "judge.png");
-    loadAndCache(ren, texNumberAtlas, s + "judge_number.png");
-    loadAndCache(ren, texLaneCover,   s + "lanecover.png");
+    loadAndCache(ren, texJudgeAtlas,  s + "judge.png");        track(texJudgeAtlas);
+    loadAndCache(ren, texNumberAtlas, s + "judge_number.png"); track(texNumberAtlas);
+    loadAndCache(ren, texLaneCover,   s + "lanecover.png");    track(texLaneCover);
 
-    loadAndCache(ren, texGaugeAssist, s + "gauge_assist.png");
-    loadAndCache(ren, texGaugeNormal, s + "gauge_normal.png");
-    loadAndCache(ren, texGaugeHard,   s + "gauge_hard.png");
-    loadAndCache(ren, texGaugeExHard, s + "gauge_exhard.png");
-    loadAndCache(ren, texGaugeHazard, s + "gauge_hazard.png");
-    loadAndCache(ren, texGaugeDan,    s + "gauge_dan.png");
+    loadAndCache(ren, texGaugeAssist, s + "gauge_assist.png"); track(texGaugeAssist);
+    loadAndCache(ren, texGaugeNormal, s + "gauge_normal.png"); track(texGaugeNormal);
+    loadAndCache(ren, texGaugeHard,   s + "gauge_hard.png");   track(texGaugeHard);
+    loadAndCache(ren, texGaugeExHard, s + "gauge_exhard.png"); track(texGaugeExHard);
+    loadAndCache(ren, texGaugeHazard, s + "gauge_hazard.png"); track(texGaugeHazard);
+    loadAndCache(ren, texGaugeDan,    s + "gauge_dan.png");    track(texGaugeDan);
     // ★修正: gauge_frame は init() で一度だけロードする。
     //        旧実装は renderGauge() 内で毎フレーム std::string 生成 + std::map 探索 + 初回 I/O が走っていた。
-    loadAndCache(ren, texGaugeFrame,  s + "gauge_frame.png");
+    loadAndCache(ren, texGaugeFrame,  s + "gauge_frame.png");  track(texGaugeFrame);
     // ★修正: Flame_nameplate は init() で一度だけロードする。
     //        旧実装は renderUI() 内で毎フレーム std::string 生成 + std::map::find × 2 が走っていた。
-    loadAndCache(ren, texNameplate,   s + "Flame_nameplate.png");
+    loadAndCache(ren, texNameplate,   s + "Flame_nameplate.png"); track(texNameplate);
 
-    loadAndCache(ren, texKeys,      s + "7keypad.png");
-    loadAndCache(ren, lane_Flame,   s + "lane_Flame.png");
-    loadAndCache(ren, lane_Flame2,  s + "lane_Flame2.png");
+    loadAndCache(ren, texKeys,      s + "7keypad.png");    track(texKeys);
+    loadAndCache(ren, lane_Flame,   s + "lane_Flame.png"); track(lane_Flame);
+    loadAndCache(ren, lane_Flame2,  s + "lane_Flame2.png"); track(lane_Flame2);
 
     texBombs.clear();
     for (int i = 0; i < 10; i++) {
         TextureRegion tr;
         loadAndCache(ren, tr, s + "bomb_" + std::to_string(i) + ".png");
-        if (tr) texBombs.push_back(tr);
+        if (tr) { texBombs.push_back(tr); skinOk++; } else { skinFail++; }
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "2");
-    loadAndCache(ren, tex_scratch, s + "scratch.png");
+    loadAndCache(ren, tex_scratch, s + "scratch.png"); track(tex_scratch);
     if (tex_scratch) {
         SDL_SetTextureScaleMode(tex_scratch.texture, SDL_ScaleModeBest);
         SDL_SetTextureBlendMode(tex_scratch.texture, SDL_BLENDMODE_BLEND);
     }
-    loadAndCache(ren, tex_scratch_center, s + "scratch_center.png");
+    loadAndCache(ren, tex_scratch_center, s + "scratch_center.png"); track(tex_scratch_center);
     if (tex_scratch_center) {
         SDL_SetTextureScaleMode(tex_scratch_center.texture, SDL_ScaleModeBest);
         SDL_SetTextureBlendMode(tex_scratch_center.texture, SDL_BLENDMODE_BLEND);
     }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+
+    // スキンロード結果サマリ。失敗があれば WARN レベルで目立たせる。
+    // 見た目強化でテクスチャを追加したときに「追加したファイルが正しく読めているか」の確認にも使える。
+    if (skinFail == 0) {
+        LOG_INFO("NoteRenderer", "init done: skin textures OK=%d FAIL=0 bombs=%zu",
+                 skinOk, texBombs.size());
+    } else {
+        LOG_WARN("NoteRenderer", "init done: skin textures OK=%d FAIL=%d bombs=%zu — missing files above",
+                 skinOk, skinFail, texBombs.size());
+    }
 
     rebuildLaneLayout();
 }
@@ -621,7 +642,7 @@ void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, f
     int x       = ll.baseX + ll.totalWidth / 2;
     // 判定文字の高さ基準: renderJudgment は judgeY-50 あたりに描画するので
     // FAST/SLOWはその上20px = judgeY - 90
-    int y       = judgeY - 180;
+    int y       = judgeY - 200;
 
     SDL_Color color = isFast ? SDL_Color{0, 200, 255, alpha}
                              : SDL_Color{255, 140, 0,   alpha};
@@ -838,6 +859,8 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
+
 
 
 

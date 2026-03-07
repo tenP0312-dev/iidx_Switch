@@ -54,13 +54,13 @@ public:
 
 private:
     SoundManager() : currentPreviewChunk(nullptr), currentTotalMemory(0) {} 
-    ~SoundManager() { cleanup(); }
+    ~SoundManager() = default; // cleanup()はmain()から明示的に呼ぶ。SDL_Quit後のdouble-freeを防ぐ。
     SoundManager(const SoundManager&) = delete;
     SoundManager& operator=(const SoundManager&) = delete;
 
     struct BoxEntry {
         std::string pckPath;
-        uint32_t offset;
+        uint64_t offset; // uint32_t だと 4GB 超で overflow。uint64_t に統一。
         uint32_t size;
     };
 
@@ -73,6 +73,7 @@ private:
     std::unordered_map<std::string, BoxEntry> boxIndex;
 
     Mix_Chunk* currentPreviewChunk = nullptr;
+    std::string lastPreviewPath;   // playPreview()のstatic変数をメンバに昇格。clear()でリセット可能にする。
 
     uint64_t currentTotalMemory = 0;
     const uint64_t MAX_WAV_MEMORY = 512 * 1024 * 1024;

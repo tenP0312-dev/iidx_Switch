@@ -107,16 +107,27 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
     double fps = (avgFps.den > 0) ? (double)avgFps.num / avgFps.den : 30.0;
 
     if (vH > MAX_VIDEO_HEIGHT) {
-        fprintf(stderr, "BGA: rejected — height %d > %d limit\n", vH, MAX_VIDEO_HEIGHT);
+        LOG_WARN("BgaManager", "loadBgaFile: rejected — height %d > %d limit '%s'",
+                 vH, MAX_VIDEO_HEIGHT, path.c_str());
         avformat_close_input(&pFormatCtx); pFormatCtx = nullptr;
         return false;
     }
     if (fps > (double)MAX_VIDEO_FPS + 0.5) {
-        fprintf(stderr, "BGA: rejected — fps %.1f > %d limit\n", fps, MAX_VIDEO_FPS);
+        LOG_WARN("BgaManager", "loadBgaFile: rejected — fps %.1f > %d limit '%s'",
+                 fps, MAX_VIDEO_FPS, path.c_str());
         avformat_close_input(&pFormatCtx); pFormatCtx = nullptr;
         return false;
     }
     videoFps = fps;
+
+    // 動画のメタ情報をログに残す。
+    // 解像度・FPS・コーデックの問題は loadBgaFile の中では起きず
+    // デコードスレッド側で無音で失敗するケースが多いため、ここで記録しておくと原因特定が速い。
+    const AVCodecDescriptor* desc = avcodec_descriptor_get(pCodecPar->codec_id);
+    LOG_INFO("BgaManager", "loadBgaFile: %dx%d %.1ffps codec=%s '%s'",
+             vW, vH, fps,
+             desc ? desc->name : "unknown",
+             path.c_str());
 
     // --- コーデック初期化 ---
     const AVCodec* pCodec = avcodec_find_decoder(pCodecPar->codec_id);
@@ -153,7 +164,8 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
                                      SDL_TEXTUREACCESS_STREAMING,
                                      videoTexW, videoTexH);
     if (!videoTexture) {
-        fprintf(stderr, "BGA: SDL_CreateTexture failed (%dx%d)\n", videoTexW, videoTexH);
+        LOG_ERROR("BgaManager", "loadBgaFile: SDL_CreateTexture failed %dx%d '%s'",
+                  videoTexW, videoTexH, path.c_str());
         avcodec_free_context(&pCodecCtx); pCodecCtx = nullptr;
         avformat_close_input(&pFormatCtx); pFormatCtx = nullptr;
         return false;
@@ -173,7 +185,9 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
     isVideoMode = true;
     isReady.store(false, std::memory_order_release);
 
-    // デコードスレッド起動
+    // デコードスレッド起動（スロットサイズをログに残す：OOM時の手がかりになる）
+    LOG_INFO("BgaManager", "loadBgaFile: starting decode thread slotBytes=%zuKB x%d",
+             slotBytes / 1024, NUM_SLOTS);
     decodeThread = std::thread(&BgaManager::videoWorker, this);
     return true;
 }
@@ -489,6 +503,8 @@ void BgaManager::clear() {
 }
 
 void BgaManager::cleanup() { clear(); }
+
+
 
 
 
