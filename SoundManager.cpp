@@ -1,4 +1,5 @@
 #include "SoundManager.hpp"
+#include "Logger.hpp"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
 #include <iostream>
@@ -14,14 +15,19 @@ void SoundManager::init() {
 
     if (Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 1, 512) < 0) {
         std::cerr << "Mix_OpenAudio Error: " << Mix_GetError() << std::endl;
+        LOG_ERROR("SoundManager", "Mix_OpenAudio failed: %s", Mix_GetError());
+    } else {
+        LOG_INFO("SoundManager", "Mix_OpenAudio OK (22050Hz, mono, buf=512)");
     }
 
     Mix_AllocateChannels(256);
-    std::cout << "SoundManager Initialized." << std::endl;
+    LOG_INFO("SoundManager", "init complete. channels=256");
 }
 
 void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::string& bmsonName) {
     boxIndex.clear();
+    LOG_INFO("SoundManager", "preloadBoxIndex start: rootPath='%s' bmsonName='%s'",
+             rootPath.c_str(), bmsonName.c_str());
 
     // ── ヘルパー: 通常boxwavのエントリをboxIndexに登録 ──────────────────
     // pckPath のファイルを開き、エントリを boxIndex に追加する。
@@ -53,6 +59,7 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                 char targetBuf[32];
                 if (!ifs.read(targetBuf, 32)) break;
                 std::string targetName(targetBuf, strnlen(targetBuf, 32));
+                LOG_INFO("SoundManager", "REDIRECT: '%s' -> '%s'", curPath.c_str(), targetName.c_str());
                 // 同フォルダの実体boxwavを再帰的にロード
                 std::string dir = curPath.substr(0, curPath.find_last_of('/') + 1);
                 std::string realPath = dir + targetName;
@@ -72,6 +79,7 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                     uint32_t rCount, rd1, rd2;
                     if (!rifs.read((char*)&rCount, 4)) break;
                     rifs.read((char*)&rd1, 4); rifs.read((char*)&rd2, 4);
+                    LOG_INFO("SoundManager", "REDIRECT real boxwav: '%s' entries=%u (part%d)", rPath.c_str(), rCount, rPartIdx);
                     for (uint32_t i = 0; i < rCount; ++i) {
                         char nameBuf[32]; uint32_t fSize;
                         if (!rifs.read(nameBuf, 32)) break;
@@ -107,6 +115,7 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
                     uint32_t rCount, rd1, rd2;
                     if (!rifs.read((char*)&rCount, 4)) break;
                     rifs.read((char*)&rd1, 4); rifs.read((char*)&rd2, 4);
+                    LOG_INFO("SoundManager", "REDIRECT+EXTRA real boxwav: '%s' entries=%u (part%d)", rPath.c_str(), rCount, rPartIdx);
                     for (uint32_t i = 0; i < rCount; ++i) {
                         char nameBuf[32]; uint32_t fSize;
                         if (!rifs.read(nameBuf, 32)) break;
@@ -136,6 +145,8 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
             uint32_t count = magic; // magic == entry_count
             uint32_t d1, d2;
             ifs.read((char*)&d1, 4); ifs.read((char*)&d2, 4);
+            LOG_INFO("SoundManager", "normal boxwav: '%s' entries=%u (part%d)",
+                     curPath.c_str(), count, partIdx);
             for (uint32_t i = 0; i < count; ++i) {
                 char nameBuf[32]; uint32_t fSize;
                 if (!ifs.read(nameBuf, 32)) break;
@@ -172,18 +183,28 @@ void SoundManager::preloadBoxIndex(const std::string& rootPath, const std::strin
     }
 
     loadBoxFile(part1);
+    LOG_INFO("SoundManager", "preloadBoxIndex done: boxIndex.size=%zu, memory=%lluMB / %lluMB",
+             boxIndex.size(),
+             (unsigned long long)(currentTotalMemory / 1024 / 1024),
+             (unsigned long long)(MAX_WAV_MEMORY   / 1024 / 1024));
 }
 
 void SoundManager::loadSingleSound(const std::string& filename, const std::string& rootPath, const std::string& bmsonName) {
     uint32_t id = getHash(filename);
-    if (sounds.find(id) != sounds.end()) return;
+    if (sounds.find(id) != sounds.end()) {
+        LOG_INFO("SoundManager", "loadSingleSound SKIP (already loaded): '%s'", filename.c_str());
+        return;
+    }
 
     if (boxIndex.count(filename)) {
         auto& entry = boxIndex[filename];
 
-        // ★修正: MAX_WAV_MEMORY チェックを boxIndex パスにも追加。
-        //        旧実装はこのパスだけチェックが抜けていた。
-        if (currentTotalMemory + entry.size > MAX_WAV_MEMORY) return;
+        if (currentTotalMemory + entry.size > MAX_WAV_MEMORY) {
+            LOG_WARN("SoundManager", "loadSingleSound SKIP (memory full): '%s' size=%u mem=%lluMB",
+                     filename.c_str(), entry.size,
+                     (unsigned long long)(currentTotalMemory / 1024 / 1024));
+            return;
+        }
 
         std::ifstream ifs(entry.pckPath, std::ios::binary);
         if (ifs) {
@@ -203,9 +224,14 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
             if (chunk) {
                 sounds[id] = chunk;
                 currentTotalMemory += entry.size;
+                LOG_INFO("SoundManager", "loaded (boxwav): '%s' size=%u mem=%lluMB",
+                         filename.c_str(), entry.size,
+                         (unsigned long long)(currentTotalMemory / 1024 / 1024));
             } else {
                 fprintf(stderr, "[SoundManager] Mix_LoadWAV_RW failed: %s (%s)\n",
                         filename.c_str(), Mix_GetError());
+                LOG_ERROR("SoundManager", "Mix_LoadWAV_RW failed (boxwav): '%s' err=%s",
+                          filename.c_str(), Mix_GetError());
             }
             return;
         }
@@ -214,11 +240,18 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
     // 外部ファイル読み込み
     std::string path = rootPath + (rootPath.empty() || rootPath.back() == '/' ? "" : "/") + filename;
     SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb");
-    if (!rw) return;
+    if (!rw) {
+        LOG_WARN("SoundManager", "external file not found: '%s'", path.c_str());
+        return;
+    }
 
     uint64_t fileSize = SDL_RWsize(rw);
     if (currentTotalMemory + fileSize > MAX_WAV_MEMORY) {
         SDL_RWclose(rw);
+        LOG_WARN("SoundManager", "loadSingleSound SKIP (memory full, external): '%s' size=%llu mem=%lluMB",
+                 filename.c_str(),
+                 (unsigned long long)fileSize,
+                 (unsigned long long)(currentTotalMemory / 1024 / 1024));
         return;
     }
 
@@ -229,6 +262,13 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
     if (chunk) {
         sounds[id] = chunk;
         currentTotalMemory += fileSize;
+        LOG_INFO("SoundManager", "loaded (external): '%s' size=%llu mem=%lluMB",
+                 filename.c_str(),
+                 (unsigned long long)fileSize,
+                 (unsigned long long)(currentTotalMemory / 1024 / 1024));
+    } else {
+        LOG_ERROR("SoundManager", "Mix_LoadWAV_RW failed (external): '%s' err=%s",
+                  filename.c_str(), Mix_GetError());
     }
 }
 
@@ -241,13 +281,20 @@ void SoundManager::loadSoundsInBulk(const std::vector<std::string>& filenames,
     std::vector<std::string> externalFiles;
 
     for (const auto& name : filenames) {
-        if (sounds.find(getHash(name)) != sounds.end()) continue;
+        if (sounds.find(getHash(name)) != sounds.end()) {
+            LOG_INFO("SoundManager", "bulk SKIP (already loaded): '%s'", name.c_str());
+            continue;
+        }
         if (boxIndex.count(name)) {
             groupPerBox[boxIndex[name].pckPath].push_back(name);
         } else {
+            LOG_WARN("SoundManager", "bulk not in boxIndex (->external): '%s'", name.c_str());
             externalFiles.push_back(name);
         }
     }
+
+    LOG_INFO("SoundManager", "loadSoundsInBulk: total=%zu boxGroups=%zu external=%zu",
+             filenames.size(), groupPerBox.size(), externalFiles.size());
 
     int processedCount = 0;
 
@@ -258,26 +305,39 @@ void SoundManager::loadSoundsInBulk(const std::vector<std::string>& filenames,
         });
 
         std::ifstream ifs(pckPath, std::ios::binary);
-        if (!ifs) continue;
+        if (!ifs) {
+            LOG_ERROR("SoundManager", "bulk: failed to open boxwav '%s'", pckPath.c_str());
+            continue;
+        }
+        LOG_INFO("SoundManager", "bulk: processing boxwav '%s' (%zu entries)", pckPath.c_str(), list.size());
 
         for (const auto& name : list) {
             auto& entry = boxIndex[name];
             if (currentTotalMemory + entry.size > MAX_WAV_MEMORY) {
+                LOG_WARN("SoundManager", "bulk SKIP (memory full): '%s' size=%u mem=%lluMB",
+                         name.c_str(), entry.size,
+                         (unsigned long long)(currentTotalMemory / 1024 / 1024));
                 processedCount++;
                 if (onProgress) onProgress(processedCount, name);
                 continue;
             }
 
-            // ★修正: SDL_malloc → loadBuffer (再利用バッファ) に変更。
-            //        SDL_malloc/SDL_free の繰り返しはヒープフラグメンテーションの原因。
-            //        30〜60分プレイ後に大きな連続領域の確保だけ失敗するようになり、
-            //        「BGMだけ鳴らなくなる」症状を引き起こしていた。
-            //        loadBuffer は最大サイズに一度だけ拡大し、以降は解放しない。
             if (loadBuffer.size() < entry.size)
                 loadBuffer.resize(entry.size);
 
             ifs.seekg(entry.offset);
             ifs.read((char*)loadBuffer.data(), entry.size);
+
+            // read の実際の読み取りバイト数を確認（部分読み取り検出）
+            std::streamsize readBytes = ifs.gcount();
+            if (readBytes != (std::streamsize)entry.size) {
+                LOG_ERROR("SoundManager", "bulk read SHORT: '%s' expected=%u got=%lld offset=%u",
+                          name.c_str(), entry.size, (long long)readBytes, entry.offset);
+                ifs.clear(); // eofbit/failbitをリセットして次のseekgを有効にする
+                processedCount++;
+                if (onProgress) onProgress(processedCount, name);
+                continue;
+            }
 
             SDL_RWops* rwIndiv = SDL_RWFromMem(loadBuffer.data(), (int)entry.size);
             Mix_Chunk* chunk = Mix_LoadWAV_RW(rwIndiv, 0);
@@ -289,6 +349,8 @@ void SoundManager::loadSoundsInBulk(const std::vector<std::string>& filenames,
             } else {
                 fprintf(stderr, "[SoundManager] Mix_LoadWAV_RW failed: %s (%s)\n",
                         name.c_str(), Mix_GetError());
+                LOG_ERROR("SoundManager", "Mix_LoadWAV_RW failed (bulk): '%s' err=%s",
+                          name.c_str(), Mix_GetError());
             }
 
             processedCount++;
@@ -301,20 +363,23 @@ void SoundManager::loadSoundsInBulk(const std::vector<std::string>& filenames,
         processedCount++;
         if (onProgress) onProgress(processedCount, name);
     }
+
+    LOG_INFO("SoundManager", "loadSoundsInBulk done: sounds.size=%zu mem=%lluMB/%lluMB",
+             sounds.size(),
+             (unsigned long long)(currentTotalMemory / 1024 / 1024),
+             (unsigned long long)(MAX_WAV_MEMORY   / 1024 / 1024));
 }
 
 void SoundManager::play(int soundId) {
     uint32_t id = static_cast<uint32_t>(soundId);
-    // ★修正: sounds.count(id) + sounds[id] の二重ハッシュ計算を廃止。
-    //        find() でイテレータを1回取得し、以降はイテレータ経由で直接アクセスする。
-    //        1音再生ごとにハッシュ計算が2→1回になる。
     auto it = sounds.find(id);
     if (it != sounds.end() && it->second != nullptr) {
         Mix_Chunk* targetChunk = it->second;
         int newChannel = Mix_PlayChannel(-1, targetChunk, 0);
 
         if (newChannel == -1) {
-            static int nextVictim = 0;
+            // 全チャンネル使用中 → 強奪
+            LOG_WARN("SoundManager", "all channels busy, stealing ch=%d (soundId=%u)", nextVictim, id);
             newChannel = nextVictim;
             Mix_HaltChannel(newChannel);
             Mix_PlayChannel(newChannel, targetChunk, 0);
@@ -325,6 +390,8 @@ void SoundManager::play(int soundId) {
             Mix_Volume(newChannel, 96);
             activeChannels[id] = newChannel;
         }
+    } else {
+        LOG_WARN("SoundManager", "play: soundId=%u not in sounds (not loaded?)", id);
     }
 }
 
@@ -364,6 +431,9 @@ void SoundManager::stopAll() {
 }
 
 void SoundManager::clear() {
+    LOG_INFO("SoundManager", "clear() start: sounds=%zu mem=%lluMB",
+             sounds.size(),
+             (unsigned long long)(currentTotalMemory / 1024 / 1024));
     stopAll();
     for (auto& pair : sounds) {
         if (pair.second) Mix_FreeChunk(pair.second);
@@ -373,20 +443,19 @@ void SoundManager::clear() {
 
     boxIndex.clear();
     currentTotalMemory = 0;
+    nextVictim = 0;
     sounds.reserve(4000);
 
-    // ★修正: Mix_CloseAudio()/Mix_OpenAudio() を廃止する。
-    // Switch では OpenAudio の再呼び出しがドライバ側の解放完了前に実行されると
-    // -1 を返し、以降の Mix_PlayChannel が全て失敗して 2曲目以降が無音になる。
-    // オーディオデバイスはアプリ起動から終了まで開きっぱなしにし、
-    // チャンネルの再割り当てだけ行えば十分。
     Mix_AllocateChannels(256);
+    LOG_INFO("SoundManager", "clear() done");
 }
 
 void SoundManager::cleanup() {
     clear();
     Mix_CloseAudio();
 }
+
+
 
 
 

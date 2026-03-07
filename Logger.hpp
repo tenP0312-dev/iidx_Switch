@@ -1,0 +1,77 @@
+#ifndef LOGGER_HPP
+#define LOGGER_HPP
+
+#include <string>
+#include <fstream>
+#include <cstdio>
+#include <cstdarg>
+#include <SDL2/SDL.h>
+
+// ─────────────────────────────────────────────────────────
+//  Logger  ―  シンプルなファイルロガー
+//
+//  使い方:
+//    Logger::init(Config::ROOT_PATH + "log.txt");  // 起動時に1回
+//    LOG_INFO("SoundManager", "loaded %d sounds", count);
+//    LOG_WARN("BgaManager",  "file not found: %s", path.c_str());
+//    LOG_ERROR("SoundManager","Mix_LoadWAV_RW failed: %s", Mix_GetError());
+//
+//  出力フォーマット:
+//    [  1234ms][INFO ][SoundManager] loaded 1185 sounds
+// ─────────────────────────────────────────────────────────
+class Logger {
+public:
+    static void init(const std::string& path) {
+        // 起動毎にリセット（既存ファイルを上書き）
+        instance().open(path);
+    }
+
+    static void log(const char* level, const char* tag, const char* fmt, ...) {
+        Logger& L = instance();
+        if (!L.file_) return;
+
+        uint32_t ms = SDL_GetTicks();
+        char msg[1024];
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(msg, sizeof(msg), fmt, ap);
+        va_end(ap);
+
+        fprintf(L.file_, "[%7ums][%-5s][%s] %s\n", ms, level, tag, msg);
+        fflush(L.file_);
+    }
+
+    static void close() {
+        Logger& L = instance();
+        if (L.file_) { fclose(L.file_); L.file_ = nullptr; }
+    }
+
+private:
+    FILE* file_ = nullptr;
+
+    static Logger& instance() {
+        static Logger inst;
+        return inst;
+    }
+
+    void open(const std::string& path) {
+        if (file_) fclose(file_);
+        file_ = fopen(path.c_str(), "w");
+        if (file_) {
+            fprintf(file_, "=== GeminiRhythm Log ===\n");
+            fflush(file_);
+        }
+    }
+
+    Logger() {}
+    ~Logger() { close(); }
+    Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
+};
+
+// ─── 呼び出しマクロ（タグ固定版） ───────────────────────
+#define LOG_INFO(tag, fmt, ...)  Logger::log("INFO",  tag, fmt, ##__VA_ARGS__)
+#define LOG_WARN(tag, fmt, ...)  Logger::log("WARN",  tag, fmt, ##__VA_ARGS__)
+#define LOG_ERROR(tag, fmt, ...) Logger::log("ERROR", tag, fmt, ##__VA_ARGS__)
+
+#endif // LOGGER_HPP

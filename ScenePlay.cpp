@@ -4,6 +4,7 @@
 #include "Config.hpp"
 #include "SceneResult.hpp"
 #include "BgaManager.hpp"
+#include "Logger.hpp"
 #include <cmath>
 #include <algorithm>
 #include <SDL2/SDL_image.h> 
@@ -87,6 +88,7 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine) {
 
 // --- メインロジック ---
 bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath) {
+    LOG_INFO("ScenePlay", "=== run() start: '%s' ===", bmsonPath.c_str());
     SoundManager& snd = SoundManager::getInstance();
     // ─────────────────────────────────────────────
     // フェーズ 1: 前曲クリーンアップ
@@ -95,7 +97,9 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
         BgaManager tempBga;
         tempBga.cleanup();
     }
+    LOG_INFO("ScenePlay", "Phase1: snd.clear() start");
     snd.clear();
+    LOG_INFO("ScenePlay", "Phase1: snd.clear() done");
     SDL_RenderClear(ren);
     SDL_RenderPresent(ren);
     SDL_Delay(200);
@@ -112,7 +116,13 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
         SDL_Event e; while (SDL_PollEvent(&e));
     });
 
-    if (data.sound_channels.empty()) return true;
+    if (data.sound_channels.empty()) {
+        LOG_WARN("ScenePlay", "sound_channels empty, aborting");
+        return true;
+    }
+    LOG_INFO("ScenePlay", "Phase2: bmson loaded: title='%s' channels=%zu bpm=%.1f resolution=%d",
+             data.header.title.c_str(), data.sound_channels.size(),
+             data.header.bpm, data.header.resolution);
 
     // JSON DOM をここで破棄させる（スコープ外に出ているため自動解放済み）
     SDL_Delay(100);
@@ -127,6 +137,7 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 
     PlayEngine engine;
     engine.init(data);
+    LOG_INFO("ScenePlay", "Phase3: engine.init done: totalNotes=%d", engine.getStatus().totalNotes);
     drawStartIndex = 0;
 
     BgaManager bga;
@@ -193,6 +204,8 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
         SDL_Event e; while (SDL_PollEvent(&e));
     };
 
+    LOG_INFO("ScenePlay", "Phase4: preloadBoxIndex start: dir='%s' base='%s'",
+             bmsonDir.c_str(), bmsonBaseName.c_str());
     showLoadingScreen("BOXWAV Loading...");
     snd.preloadBoxIndex(bmsonDir, bmsonBaseName);
 
@@ -215,6 +228,12 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     soundList.reserve(soundListBGM.size() + soundListKeys.size());
     soundList.insert(soundList.end(), soundListBGM.begin(), soundListBGM.end());
     soundList.insert(soundList.end(), soundListKeys.begin(), soundListKeys.end());
+
+    LOG_INFO("ScenePlay", "Phase4: soundList BGM=%zu keys=%zu total=%zu",
+             soundListBGM.size(), soundListKeys.size(), soundList.size());
+    // 先頭BGMファイル名をログ（原因調査用）
+    if (!soundListBGM.empty())
+        LOG_INFO("ScenePlay", "Phase4: first BGM channel='%s'", soundListBGM[0].c_str());
 
     showLoadingScreen("AUDIO Loading...");
     snd.loadSoundsInBulk(soundList, bmsonDir, bmsonBaseName, [&](int processedCount, const std::string&) {
@@ -286,7 +305,9 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     decideButtonPressed  = false;
 
     uint32_t start_ticks = SDL_GetTicks() + 2000;
-    startTicks = start_ticks; // ★修正(CRITICAL-1): メンバ変数にコピー → processInput で参照
+    startTicks = start_ticks;
+    LOG_INFO("ScenePlay", "=== Play loop start: start_ticks=%u maxTargetMs=%.0f ===",
+             start_ticks, max_target_ms);
     uint32_t lastFpsTime = SDL_GetTicks();
     int frameCount = 0, fps = 0;
     bool playing = true;
@@ -422,6 +443,11 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 
     // ★修正①: ループ終了後に一度だけコピー（FC の場合はループ内でコピー済みなのでスキップ）
     if (!fcEffectTriggered) status = engine.getStatus();
+
+    LOG_INFO("ScenePlay", "=== Play loop end: isAborted=%d score(PG=%d GR=%d PR=%d BD=%d) combo=%d ===",
+             isAborted ? 1 : 0,
+             status.pGreatCount, status.greatCount, status.poorCount, status.badCount,
+             status.combo);
 
     if (gradTex) SDL_DestroyTexture(gradTex);
 

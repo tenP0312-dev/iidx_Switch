@@ -1,5 +1,6 @@
 #include "BgaManager.hpp"
 #include "Config.hpp"
+#include "Logger.hpp"
 #include <SDL2/SDL_image.h>
 #include <cstring>
 #include <algorithm>
@@ -19,7 +20,11 @@ void BgaManager::init(size_t expectedSize) {
 void BgaManager::loadBmp(int id, const std::string& fullPath, SDL_Renderer* renderer) {
     if (textures.count(id)) return;
     SDL_Surface* surf = IMG_Load(fullPath.c_str());
-    if (!surf) return;
+    if (!surf) {
+        LOG_WARN("BgaManager", "IMG_Load failed: id=%d path='%s' err=%s",
+                 id, fullPath.c_str(), IMG_GetError());
+        return;
+    }
 
     BgaTextureEntry entry;
     entry.w   = surf->w;
@@ -52,6 +57,7 @@ void BgaManager::preLoad(long long startPulse, SDL_Renderer* renderer) {
 // ============================================================
 
 bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
+    LOG_INFO("BgaManager", "loadBgaFile: '%s'", path.c_str());
     std::string targetPath = path;
     if (targetPath.compare(0, 5, "sdmc:") == 0) targetPath.erase(0, 5);
 
@@ -67,8 +73,12 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
         if (fallback.compare(0, 5, "sdmc:") == 0) fallback.erase(0, 5);
         err = avformat_open_input(&pFormatCtx, fallback.c_str(), NULL, NULL);
     }
-    if (err != 0) return false;
+    if (err != 0) {
+        LOG_WARN("BgaManager", "loadBgaFile: could not open video '%s'", path.c_str());
+        return false;
+    }
     if (avformat_find_stream_info(pFormatCtx, NULL) < 0) {
+        LOG_WARN("BgaManager", "loadBgaFile: find_stream_info failed '%s'", path.c_str());
         avformat_close_input(&pFormatCtx); pFormatCtx = nullptr;
         return false;
     }
@@ -479,4 +489,6 @@ void BgaManager::clear() {
 }
 
 void BgaManager::cleanup() { clear(); }
+
+
 

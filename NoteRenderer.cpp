@@ -507,11 +507,6 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     }
 }
 
-
-// ================================================================
-// NoteRenderer.cpp の renderBeatLine 実装を差し替えてください
-// ================================================================
-
 void NoteRenderer::renderSuddenLift(SDL_Renderer* ren) {
     // レーンレイアウトは init() および notifyLayoutChanged() 呼び出し時のみ再計算。
     int totalWidth = ll.totalWidth;
@@ -581,10 +576,6 @@ void NoteRenderer::renderBomb(SDL_Renderer* ren, int lane, int frame) {
     }
 }
 
-// ================================================================
-//  renderEffects: キービーム描画 + 期限切れエントリの削除
-//  (ScenePlay から移動)
-// ================================================================
 void NoteRenderer::renderEffects(SDL_Renderer* ren,
                                   ActiveEffect* buf, size_t& count,
                                   const bool* lanePressed, uint32_t now) {
@@ -605,10 +596,6 @@ void NoteRenderer::renderEffects(SDL_Renderer* ren,
     count = write;
 }
 
-// ================================================================
-//  renderBombs: ボムアニメ描画 + 期限切れエントリの削除
-//  (ScenePlay から移動)
-// ================================================================
 void NoteRenderer::renderBombs(SDL_Renderer* ren,
                                  BombAnim* buf, size_t& count,
                                  uint32_t now) {
@@ -626,11 +613,6 @@ void NoteRenderer::renderBombs(SDL_Renderer* ren,
     count = write;
 }
 
-// ================================================================
-//  renderFastSlow: FAST/SLOW テキスト表示
-//  isFast/isSlow は JudgmentDisplay のフラグから渡す
-//  progress: 0.0 (表示開始) → 1.0 (完全透明)
-// ================================================================
 void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, float progress, double diffMs) {
     if (Config::SHOW_FAST_SLOW == 0) return;
     if (!isFast && !isSlow) return;
@@ -639,7 +621,7 @@ void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, f
     int x       = ll.baseX + ll.totalWidth / 2;
     // 判定文字の高さ基準: renderJudgment は judgeY-50 あたりに描画するので
     // FAST/SLOWはその上20px = judgeY - 90
-    int y       = judgeY - 90;
+    int y       = judgeY - 180;
 
     SDL_Color color = isFast ? SDL_Color{0, 200, 255, alpha}
                              : SDL_Color{255, 140, 0,   alpha};

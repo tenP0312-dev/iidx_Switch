@@ -1,5 +1,5 @@
 #---------------------------------------------------------------------------------
-# .nroを作成するための Makefile (FFmpeg対応版)
+# .nroを作成するための Makefile (FFmpeg対応版 / 個別コンパイル)
 #---------------------------------------------------------------------------------
 TARGET      := sdl2_red_square
 BUILD       := build
@@ -34,7 +34,6 @@ NACP_VERSION:= "1.0.0"
 # --- コンパイルオプション ---
 CFLAGS  := -g -Wall -Os -ffunction-sections -fdata-sections -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS  += -D__SWITCH__
-# FFmpegのヘッダーもここに含まれます
 CFLAGS  += -I$(PORTLIBS)/include -I$(LIBNX)/include
 CFLAGS  += -I$(PORTLIBS)/include/SDL2
 CFLAGS  += -I$(PORTLIBS)/include/SDL2_mixer
@@ -44,10 +43,6 @@ CFLAGS  += -I.
 # --- リンクオプション ---
 LDFLAGS := -specs=$(LIBNX)/switch.specs -g -march=armv8-a -mtune=cortex-a57 -fPIE
 LDFLAGS += -L$(PORTLIBS)/lib -L$(LIBNX)/lib
-
-# 1. 全ての依存ライブラリをグループ化 (この中の相互依存を解決)
-# 修正箇所: BgaManagerで使用する FFmpeg 関連ライブラリを追加しました
-# (-lavformat -lavcodec -lswscale -lswresample -lavutil)
 LDFLAGS += -Wl,--start-group \
     -lavformat -lavcodec -lswscale -lswresample -lavutil \
     -ldav1d \
@@ -55,19 +50,39 @@ LDFLAGS += -Wl,--start-group \
     -lmodplug -lmpg123 -lvorbisfile -lopusfile -lvorbis -lopus -logg \
     -lfreetype -lharfbuzz -lbz2 -lpng -ljpeg -lwebp -lz \
     -Wl,--end-group
-
-# 2. コアシステムライブラリを最後に配置
 LDFLAGS += -lEGL -lglapi -ldrm_nouveau -lnx -lm -lpthread
+
+# --- 個別コンパイル用の設定 ---
+# .cpp → build/.o に変換
+OBJS := $(addprefix $(BUILD)/, $(SOURCES:.cpp=.o))
+
+# ヘッダの依存関係ファイル (.d) も build/ に生成
+# -MMD: システムヘッダを除いた依存関係を .d ファイルに書き出す
+# -MP:  ヘッダが削除された時にエラーにならないようにする
+DEPFLAGS = -MMD -MP
+DEPS := $(OBJS:.o=.d)
 
 .PHONY: all clean
 
 all: $(OUTPUT).nro
 
-$(OUTPUT).elf: $(SOURCES)
-	@mkdir -p $(BUILD)
-	@echo "Compiling..."
+# --- リンク ---
+$(OUTPUT).elf: $(OBJS)
+	@echo "Linking..."
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# --- 個別コンパイル ---
+# build/foo.o: foo.cpp (+ 依存ヘッダは .d から自動追跡)
+$(BUILD)/%.o: %.cpp
+	@mkdir -p $(BUILD)
+	@echo "Compiling $<..."
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
+
+# --- 依存関係ファイルをインクルード ---
+# ヘッダを変更した時に関連する .o だけ再ビルドされる
+-include $(DEPS)
+
+# --- NACP / NRO ---
 $(NACP):
 	@echo "Creating NACP..."
 	$(NACPTOOL) --create $(NACP_TITLE) $(NACP_AUTHOR) $(NACP_VERSION) $@

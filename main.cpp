@@ -11,6 +11,7 @@
 #include "SceneOption.hpp" 
 #include "SceneGameOver.hpp" // 追加
 #include "SongManager.hpp" // 追加：スキャン実行用
+#include "Logger.hpp"
 #include <fstream>
 #include <unistd.h>
 #include <cstdio> 
@@ -46,6 +47,9 @@ int main(int argc, char* argv[]) {
 #endif
 
     Config::load();
+    Logger::init(Config::ROOT_PATH + "log.txt");
+    LOG_INFO("main", "=== App Start ===");
+    LOG_INFO("main", "ROOT_PATH: %s", Config::ROOT_PATH.c_str());
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0) {
         return -1;
     }
@@ -55,7 +59,7 @@ int main(int argc, char* argv[]) {
         joy = SDL_JoystickOpen(0);
     }
 
-    SDL_Window* win = SDL_CreateWindow("GeminiRhythm", 0, 0, 1280, 720, 0);
+    SDL_Window* win = SDL_CreateWindow("IIDX_TEST", 0, 0, 1280, 720, 0);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     NoteRenderer renderer;
@@ -327,6 +331,8 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+
+
 
 
 
