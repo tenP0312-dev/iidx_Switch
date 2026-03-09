@@ -34,6 +34,9 @@ public:
     JudgmentDisplay& getCurrentJudge() { return currentJudge; }
     uint32_t lastSoundPerLaneId[9];
 
+    // ★2P VS: 2P側エンジンはBGM再生をスキップ（1P側で再生するため）
+    bool skipBGM = false;
+
 private:
     // ★修正④: BMSData bmsData を削除。init() では呼び出し元の data を直接参照し、
     //          projector にもその参照を渡す。ScenePlay::run() 中は data が生存するため安全。
@@ -57,9 +60,3 @@ private:
 };
 
 #endif
-
-
-
-
-
-

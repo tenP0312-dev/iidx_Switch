@@ -4,9 +4,11 @@
 #include <SDL2/SDL_image.h>
 
 void SceneResult::run(SDL_Renderer* ren, NoteRenderer& renderer, const PlayStatus& status, const BMSHeader& header) {
-    // EXオプション使用時はスコア・ランプ一切記録しない
+    // EXオプション使用時はスコア・ランプ一切記録しない。
+    // ただし MORE NOTES (EX_OPTION==3) はクリアランプのみ保存する。
+    // saveIfBest 内で isMoreNotes フラグを見てスコア・コンボ更新をスキップする。
     BestScore best;
-    if (Config::EX_OPTION == 0) {
+    if (Config::EX_OPTION == 0 || Config::EX_OPTION == 3) {
         ScoreManager::saveIfBest(header.title, header.chartName, (int)header.total, status);
         best = ScoreManager::loadScore(header.title, header.chartName, (int)header.total);
     }
@@ -118,7 +120,9 @@ void SceneResult::run(SDL_Renderer* ren, NoteRenderer& renderer, const PlayStatu
         SDL_RenderPresent(ren);
     }
 
-    IMG_Quit();
+    // IMG_Quit() はここで呼ばない。
+    // SDL_image の初期化/終了は NoteRenderer::init()/cleanup() で一度だけ行う。
+    // ここで呼ぶと 2 曲目以降の BGA 画像ロードで NULL テクスチャになりクラッシュする。
     SDL_Delay(200);
     SDL_FlushEvents(SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP);
 }
@@ -139,4 +143,103 @@ std::string SceneResult::calculateRank(const PlayStatus& status) {
     if (ratio >= 2.0/9.0) return "E";
     return "F";
 }
+
+// ============================================================
+//  ★2P VS リザルト
+// ============================================================
+void SceneResult::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
+                         const PlayStatus& status1P, const BMSHeader& header1P,
+                         const PlayStatus& status2P, const BMSHeader& header2P) {
+    // 2P VS時はスコア保存しない
+    std::string rank1P = calculateRank(status1P);
+    std::string rank2P = calculateRank(status2P);
+
+    bool backToSelect = false;
+    uint32_t startTime = SDL_GetTicks();
+    const uint32_t MIN_DISPLAY_TIME = 500;
+    SDL_PumpEvents();
+
+    int ex1 = status1P.pGreatCount * 2 + status1P.greatCount;
+    int ex2 = status2P.pGreatCount * 2 + status2P.greatCount;
+    const char* winnerText = (ex1 > ex2) ? "1P WIN!" : (ex2 > ex1) ? "2P WIN!" : "DRAW!";
+
+    while (!backToSelect) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) return;
+            if (SDL_GetTicks() - startTime > MIN_DISPLAY_TIME) {
+                if (e.type == SDL_JOYBUTTONDOWN) {
+                    if (e.jbutton.button == Config::SYS_BTN_BACK ||
+                        e.jbutton.button == Config::SYS_BTN_DECIDE) backToSelect = true;
+                }
+                if (e.type == SDL_KEYDOWN) {
+                    if (e.key.keysym.sym == SDLK_ESCAPE ||
+                        e.key.keysym.sym == SDLK_RETURN) backToSelect = true;
+                }
+            }
+        }
+
+        SDL_SetRenderDrawColor(ren, 10, 10, 20, 255);
+        SDL_RenderClear(ren);
+
+        SDL_Color white  = {255, 255, 255, 255};
+        SDL_Color yellow = {255, 255, 0, 255};
+        SDL_Color cyan   = {0, 255, 255, 255};
+        SDL_Color orange = {255, 165, 0, 255};
+        SDL_Color gray   = {150, 150, 150, 255};
+        SDL_Color green  = {0, 255, 128, 255};
+
+        renderer.drawTextCached(ren, "VS RESULT", 640, 30, orange, true, true);
+        renderer.drawTextCached(ren, header1P.title, 640, 70, white, false, true);
+
+        SDL_Color winColor = (ex1 > ex2) ? cyan : (ex2 > ex1) ? green : yellow;
+        renderer.drawTextCached(ren, winnerText, 640, 110, winColor, true, true);
+
+        int lx = 320, rx = 960;
+        int yStart = 170;
+        int lineH = 35;
+
+        auto drawPlayerResult = [&](int cx, const PlayStatus& st, const std::string& rank,
+                                    const BMSHeader& hdr, const char* label) {
+            int y = yStart;
+            renderer.drawTextCached(ren, label, cx, y, cyan, true, true); y += lineH + 10;
+
+            char buf[64];
+            snprintf(buf, sizeof(buf), "[%s] LV.%d", hdr.chartName.c_str(), hdr.level);
+            renderer.drawTextCached(ren, buf, cx, y, gray, false, true); y += lineH;
+
+            renderer.drawTextCached(ren, std::string("RANK: ") + rank, cx, y, yellow, true, true); y += lineH + 5;
+
+            int exScore = st.pGreatCount * 2 + st.greatCount;
+            snprintf(buf, sizeof(buf), "EX SCORE: %d", exScore);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "P-GREAT: %d", st.pGreatCount);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "GREAT:   %d", st.greatCount);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "GOOD:    %d", st.goodCount);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "BAD:     %d", st.badCount);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "POOR:    %d", st.poorCount);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "MAX COMBO: %d", st.maxCombo);
+            renderer.drawTextCached(ren, buf, cx, y, white, false, true); y += lineH;
+            snprintf(buf, sizeof(buf), "FAST: %d  SLOW: %d", st.fastCount, st.slowCount);
+            renderer.drawTextCached(ren, buf, cx, y, gray, false, true);
+        };
+
+        drawPlayerResult(lx, status1P, rank1P, header1P, "1P");
+        drawPlayerResult(rx, status2P, rank2P, header2P, "2P");
+
+        SDL_SetRenderDrawColor(ren, 80, 80, 80, 255);
+        SDL_RenderDrawLine(ren, 640, yStart, 640, 680);
+
+        SDL_RenderPresent(ren);
+    }
+
+    SDL_Delay(200);
+    SDL_FlushEvents(SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP);
+}
+
 

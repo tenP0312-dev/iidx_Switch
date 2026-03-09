@@ -51,6 +51,8 @@ enum class SortMode {
     CLEAR_LAMP,
     SCORE,
     BPM,
+    ARTIST,   // アーティスト名昇順
+    NOTES,    // ノーツ数昇順
     MAX_COUNT
 };
 
@@ -107,6 +109,7 @@ private:
 };
 
 #endif // SCENESELECT_HPP
+
 
 
 

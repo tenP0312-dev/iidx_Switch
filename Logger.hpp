@@ -25,10 +25,27 @@
 //    通常は何も出力しない空マクロ。クラッシュ再現調査時だけ
 //    コンパイル時に -DENABLE_LOG_TRACE を追加して有効化する。
 //    毎フレーム有効にすると sdmc:/ への fflush で数 ms/frame のスパイクが出るので注意。
+//
+//  【指摘(a)修正】fflush バッファリング:
+//    旧実装は log() 呼び出しのたびに fflush() していた。
+//    sdmc:/ への同期フラッシュは 1回 5〜50ms かかるため、曲間で大量のログが
+//    出る場合にスパイクが発生していた。
+//    新実装: FLUSH_INTERVAL 行ごとに 1 回だけ fflush する。
+//    - FLUSH_INTERVAL = 1 → 旧動作（デバッグ時は -DLOG_FLUSH_EVERY_LINE で戻せる）
+//    - デフォルト = 16 → 1/16 の fflush 回数でクラッシュ時の最大ログ損失は 15 行
+//    WARN/ERROR は常に即時 fflush（見落とし防止）。
 // ─────────────────────────────────────────────────────────
 
 #ifdef __SWITCH__
 #include <switch.h>
+#endif
+
+// -DLOG_FLUSH_EVERY_LINE でデバッグ時に旧動作に戻す
+#ifdef LOG_FLUSH_EVERY_LINE
+  static constexpr int LOGGER_FLUSH_INTERVAL = 1;
+#else
+  // ★デバッグ中は 1 に下げてクラッシュ時のログ損失を防ぐ。安定したら 16 に戻す。
+  static constexpr int LOGGER_FLUSH_INTERVAL = 1;
 #endif
 
 class Logger {
@@ -52,7 +69,12 @@ public:
 #endif
     }
 
-    static void log(const char* level, const char* tag, const char* fmt, ...) {
+    /**
+     * @param forceFlush true のとき行数カウントに関わらず即時 fflush する。
+     *                   WARN/ERROR で使う。
+     */
+    static void log(const char* level, const char* tag, bool forceFlush,
+                    const char* fmt, ...) {
         Logger& L = instance();
         if (!L.file_) return;
 
@@ -64,16 +86,27 @@ public:
         va_end(ap);
 
         fprintf(L.file_, "[%7ums][%-5s][%s] %s\n", ms, level, tag, msg);
-        fflush(L.file_);
+
+        // 【指摘(a)修正】FLUSH_INTERVAL 行ごと、または WARN/ERROR のときだけ fflush
+        L.linesSinceFlush_++;
+        if (forceFlush || L.linesSinceFlush_ >= LOGGER_FLUSH_INTERVAL) {
+            fflush(L.file_);
+            L.linesSinceFlush_ = 0;
+        }
     }
 
     static void close() {
         Logger& L = instance();
-        if (L.file_) { fclose(L.file_); L.file_ = nullptr; }
+        if (L.file_) {
+            fflush(L.file_); // 残りバッファを書き出してから閉じる
+            fclose(L.file_);
+            L.file_ = nullptr;
+        }
     }
 
 private:
     FILE* file_ = nullptr;
+    int   linesSinceFlush_ = 0;
 
     static Logger& instance() {
         static Logger inst;
@@ -82,6 +115,7 @@ private:
 
     void open(const std::string& path) {
         if (file_) fclose(file_);
+        linesSinceFlush_ = 0;
         file_ = fopen(path.c_str(), "w");
         if (file_) {
             fprintf(file_, "=== GeminiRhythm Log ===\n");
@@ -98,19 +132,19 @@ private:
 };
 
 // ─── 呼び出しマクロ（タグ固定版） ───────────────────────
-#define LOG_INFO(tag, fmt, ...)  Logger::log("INFO",  tag, fmt, ##__VA_ARGS__)
-#define LOG_WARN(tag, fmt, ...)  Logger::log("WARN",  tag, fmt, ##__VA_ARGS__)
-#define LOG_ERROR(tag, fmt, ...) Logger::log("ERROR", tag, fmt, ##__VA_ARGS__)
+// INFO は FLUSH_INTERVAL 行ごとにまとめてフラッシュ（sdmc:/ 書き込み削減）
+// WARN/ERROR は即時フラッシュ（見落とし防止）
+#define LOG_INFO(tag, fmt, ...)  Logger::log("INFO",  tag, false, fmt, ##__VA_ARGS__)
+#define LOG_WARN(tag, fmt, ...)  Logger::log("WARN",  tag, true,  fmt, ##__VA_ARGS__)
+#define LOG_ERROR(tag, fmt, ...) Logger::log("ERROR", tag, true,  fmt, ##__VA_ARGS__)
 
 // LOG_TRACE: 毎フレーム呼ばれうる高頻度ログ。
 // 通常は空マクロ（ゼロコスト）。クラッシュ調査時に -DENABLE_LOG_TRACE を追加して有効化。
-// 有効時は sdmc:/ への fflush が毎フレーム走るため FPS が落ちる点に注意。
+// 有効時は sdmc:/ への fflush が FLUSH_INTERVAL 行ごとに走るため FPS が落ちる点に注意。
 #ifdef ENABLE_LOG_TRACE
-  #define LOG_TRACE(tag, fmt, ...) Logger::log("TRACE", tag, fmt, ##__VA_ARGS__)
+  #define LOG_TRACE(tag, fmt, ...) Logger::log("TRACE", tag, false, fmt, ##__VA_ARGS__)
 #else
   #define LOG_TRACE(tag, fmt, ...) do {} while(0)
 #endif
 
 #endif // LOGGER_HPP
-
-

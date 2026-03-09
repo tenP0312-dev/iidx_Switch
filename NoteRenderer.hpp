@@ -132,6 +132,10 @@ public:
     // オプション画面でレーン幅・スクラッチ幅が変更されたときに呼ぶ。
     // init() 以外でレイアウトを更新できる唯一の窓口。
     void notifyLayoutChanged() { rebuildLaneLayout(); }
+    // ★2P VS: 両サイドのレイアウトを事前計算
+    void rebuildBothLayouts();
+    // ★2P VS: 描画中にサイドを切り替え
+    void switchSide(int side);
 
 private:
     TTF_Font* fontSmall = nullptr;
@@ -181,11 +185,14 @@ private:
         int totalWidth = 0;  // 全鍵盤幅 + スクラッチ幅
         int bgaCenterX = 0;
     } ll;
+    LaneLayout ll1P, ll2P;  // ★2P VS: 両サイドのレイアウトキャッシュ
+    bool dualLayoutReady = false;
 
     void rebuildLaneLayout();
 };
 
 #endif // NOTERENDERER_HPP
+
 
 
 

@@ -8,6 +8,7 @@
 #include "BmsLoader.hpp"
 #include <cmath>
 #include <algorithm>
+#include <set>
 #include <SDL2/SDL_image.h> 
 
 #ifdef __SWITCH__
@@ -24,6 +25,19 @@ int ScenePlay::getLaneFromJoystickButton(int btn) {
     if (btn == Config::BTN_LANE6) return 6;
     if (btn == Config::BTN_LANE7) return 7;
     if (btn == Config::BTN_LANE8_A || btn == Config::BTN_LANE8_B) return 8;
+    return -1;
+}
+
+// 2P 用ボタン→レーン変換（BTN_2P_* を使用）
+static int getLane2P(int btn) {
+    if (btn == Config::BTN_2P_LANE1) return 1;
+    if (btn == Config::BTN_2P_LANE2) return 2;
+    if (btn == Config::BTN_2P_LANE3) return 3;
+    if (btn == Config::BTN_2P_LANE4) return 4;
+    if (btn == Config::BTN_2P_LANE5) return 5;
+    if (btn == Config::BTN_2P_LANE6) return 6;
+    if (btn == Config::BTN_2P_LANE7) return 7;
+    if (btn == Config::BTN_2P_LANE8_A || btn == Config::BTN_2P_LANE8_B) return 8;
     return -1;
 }
 
@@ -90,6 +104,7 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine) {
 // --- メインロジック ---
 bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath) {
     LOG_INFO("ScenePlay", "=== run() start: '%s' ===", bmsonPath.c_str());
+    numPlayers = 1; // ★修正: runVS()後も正しく1Pモードに戻るようにリセット
     SoundManager& snd = SoundManager::getInstance();
     // ─────────────────────────────────────────────
     // フェーズ 1: 前曲クリーンアップ
@@ -440,7 +455,10 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
                     if (t % 3 == 0)      fcColor = {0, 255, 255, 255};
                     else if (t % 3 == 1) fcColor = {0, 200, 255, 255};
                     else                  fcColor = {255, 255, 255, 255};
-                    renderer.drawText(ren, "FULL COMBO", laneCenterX, 200, fcColor, true, true);
+                    // 【指摘(3-4)修正】drawText → drawTextCached
+                    // "FULL COMBO" は固定文字列。色が3パターン=最大3エントリのキャッシュで
+                    // 100%ヒットする。毎フレームの TTF_RenderUTF8_Blended(0.5~2ms)を排除。
+                    renderer.drawTextCached(ren, "FULL COMBO", laneCenterX, 200, fcColor, true, true);
                     SDL_RenderPresent(ren);
 #ifdef __SWITCH__
                     if (!appletMainLoop()) break;
@@ -479,10 +497,10 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     snd.clear();
     bga.cleanup();
 
-    // Config::save() はすべての描画・音声処理が終わった後に実行する。
-    // fadeOut前に置くとsdmc:へのブロッキングI/O（数十〜数百ms）がフェードアウト直前に走り、
-    // プレイヤーに「演奏終了直後のフリーズ」として体感される。
-    Config::save();
+    // 【CRITICAL-3修正】Config::saveAsync() はバックグラウンドスレッドで書き込むため
+    // メインスレッドをブロックしない。旧 save() の 100ms スパイクが解消される。
+    Config::markDirty();
+    Config::saveAsync();
     if (isAborted) return false; 
     return true;
 }
@@ -717,10 +735,19 @@ void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& e
 }
 
 void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine, BgaManager& bga, double cur_ms, int64_t cur_y, int fps, const BMSHeader& header, uint32_t now, double progress) {
+    // 【CRITICAL-2対策】フレーム先頭で Config 値をスナップショットコピーする。
+    // ARM Cortex-A57 の弱メモリモデルでは、double の torn read が起きうる。
+    // BGA スレッドがフレーム途中に HIGH_SPEED を読むと中途半端な値になる。
+    // フレーム先頭で 1 回コピーすれば、このフレーム内の一貫性が保たれる。
+    const int   fc_playSide   = Config::PLAY_SIDE;
+    const int   fc_visiblePx  = Config::VISIBLE_PX;
+    const int   fc_suddenPlus = Config::SUDDEN_PLUS;
+    const int   fc_lift       = Config::LIFT;
+
     SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
     SDL_RenderClear(ren);
     renderer.renderBackground(ren);
-    int bgaX = (Config::PLAY_SIDE == 1) ? 600 : 40;
+    int bgaX = (fc_playSide == 1) ? 600 : 40;
     int bgaY = 40;
     double currentBpm = engine.getBpmFromMs(cur_ms);
     renderer.renderUI(ren, header, fps, currentBpm, engine.getStatus().exScore);
@@ -731,10 +758,21 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
     // pixels_per_y: 1Yユニットあたりのピクセル数（BPM非依存の定数）
     // ハイスピード・画面サイズで決まる唯一の定数。これを軸に全描画が決まる。
     // 475 は基準値（旧コードからの継承）、60000/res は 1Yユニット = 何ms か
-    double pixels_per_y = (Config::HIGH_SPEED * 60000.0) / (475.0 * header.resolution);
+    //
+    // 【指摘(3-5)修正】HIGH_SPEED が変わったときだけ再計算するキャッシュを導入。
+    // double の除算は ARM Cortex-A57 で ~15 サイクル。毎フレーム計算する必要はない。
+    // HIGH_SPEED は START+レーンキーで変更されたときだけ変わるため、
+    // 変化を検出して cachedPixelsPerY / cachedMaxVisibleY を更新する。
+    if (Config::HIGH_SPEED != cachedHS_ || header.resolution != cachedResolution_) {
+        cachedHS_          = Config::HIGH_SPEED;
+        cachedResolution_  = header.resolution;
+        cachedPixelsPerY_  = (cachedHS_ * 60000.0) / (475.0 * header.resolution);
+        cachedMaxVisibleY_ = (double)Config::VISIBLE_PX / std::max(1e-9, cachedPixelsPerY_) + 1000.0;
+    }
+    const double pixels_per_y  = cachedPixelsPerY_;
 
     // 可視範囲をYユニットで計算
-    double max_visible_y = (double)Config::VISIBLE_PX / std::max(1e-9, pixels_per_y) + 1000.0;
+    const double max_visible_y = cachedMaxVisibleY_;
 
     // 小節線描画
     for (const auto& bl : engine.getBeatLines()) {
@@ -822,4 +860,575 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
         renderer.drawTextCached(ren, gearText, laneCenterX, 20, {0, 255, 0, 255}, false, true);
     }
     SDL_RenderPresent(ren);
+}
+
+// ============================================================
+//  ★2P VS モード
+// ============================================================
+
+// キーボード → 2P仮想ボタン変換
+static int keyToJoyButton2P(SDL_Keycode key) {
+    switch (key) {
+        case SDLK_j:         return Config::BTN_LANE1;
+        case SDLK_k:         return Config::BTN_LANE2;
+        case SDLK_l:         return Config::BTN_LANE3;
+        case SDLK_SEMICOLON: return Config::BTN_LANE4;
+        case SDLK_COMMA:     return Config::BTN_LANE5;
+        case SDLK_PERIOD:    return Config::BTN_LANE6;
+        case SDLK_SLASH:     return Config::BTN_LANE7;
+        case SDLK_h:         return Config::BTN_LANE8_A;
+        case SDLK_n:         return Config::BTN_LANE8_B;
+        default:             return -1;
+    }
+}
+
+void ScenePlay::handlePlayerButton(int playerIdx, int lane, bool isDown,
+                                    double hit_ms, uint32_t now,
+                                    PlayEngine& engine, PlayerState& ps) {
+    if (ps.isPlayerFailed) return;
+    if (lane < 1 || lane > 8) return;
+
+    ps.lanePressed[lane] = isDown;
+
+    if (!isAutoLane(lane)) {
+        if (isDown) {
+            if (!engine.getStatus().isFailed && hit_ms >= -500.0) {
+                int resultJudge = engine.processHit(lane, hit_ms, now);
+                ps.lnHitJudge[lane] = resultJudge;
+
+                bool found = false;
+                for (size_t ei = 0; ei < ps.effectCount; ++ei) {
+                    if (ps.effectsBuf[ei].lane == lane) {
+                        ps.effectsBuf[ei].startTime = now;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && ps.effectCount < PlayerState::MAX_EFFECTS)
+                    ps.effectsBuf[ps.effectCount++] = {lane, now};
+
+                if (resultJudge >= 2) {
+                    int bombType = (resultJudge == 3) ? 1 : 2;
+                    if (ps.bombCount < PlayerState::MAX_BOMBS)
+                        ps.bombAnimsBuf[ps.bombCount++] = {lane, now, bombType};
+                }
+            }
+        } else {
+            if (!engine.getStatus().isFailed && hit_ms >= -500.0) {
+                engine.processRelease(lane, hit_ms, now);
+                ps.lnHitJudge[lane] = 0;
+            }
+        }
+    }
+}
+
+bool ScenePlay::processInputVS(double cur_ms, uint32_t now,
+                                PlayEngine& engine1P, PlayEngine& engine2P,
+                                SDL_JoystickID joy1ID, SDL_JoystickID joy2ID) {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_QUIT) return false;
+
+        int playerIdx = -1;
+
+        // キーボード入力: 1Pキーか2Pキーかで振り分け
+        if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
+            if (ev.key.repeat) continue;
+            int btn1P = keyToJoyButton(ev.key.keysym.sym);
+            int btn2P = keyToJoyButton2P(ev.key.keysym.sym);
+
+            if (btn1P >= 0) {
+                playerIdx = 0;
+                ev.type = (ev.type == SDL_KEYDOWN) ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
+                ev.jbutton.button = (Uint8)btn1P;
+                ev.jbutton.timestamp = ev.key.timestamp;
+            } else if (btn2P >= 0) {
+                playerIdx = 1;
+                ev.type = (ev.type == SDL_KEYDOWN) ? SDL_JOYBUTTONDOWN : SDL_JOYBUTTONUP;
+                ev.jbutton.button = (Uint8)btn2P;
+                ev.jbutton.timestamp = ev.key.timestamp;
+            } else {
+                continue;
+            }
+        }
+
+        if (ev.type == SDL_JOYBUTTONDOWN || ev.type == SDL_JOYBUTTONUP) {
+            if (playerIdx < 0) {
+                SDL_JoystickID id = ev.jbutton.which;
+                if (id == joy2ID && joy2ID >= 0)
+                    playerIdx = 1;
+                else
+                    playerIdx = 0;
+            }
+
+            bool isDown = (ev.type == SDL_JOYBUTTONDOWN);
+            int btn = ev.jbutton.button;
+            // 2P は BTN_2P_* で引き当て、1P は BTN_* で引き当て
+            int lane = (playerIdx == 1) ? getLane2P(btn) : getLaneFromJoystickButton(btn);
+
+            double hit_ms = (startTicks > 0)
+                ? (double)((int64_t)ev.jbutton.timestamp - (int64_t)startTicks)
+                : cur_ms;
+
+            // スクラッチ状態更新（各プレイヤーのボタン定義で判定）
+            PlayerState& curPs = players[playerIdx];
+            if (playerIdx == 0) {
+                if (btn == Config::BTN_LANE8_A) curPs.scratchUpActive = isDown;
+                if (btn == Config::BTN_LANE8_B) curPs.scratchDownActive = isDown;
+            } else {
+                if (btn == Config::BTN_2P_LANE8_A) curPs.scratchUpActive = isDown;
+                if (btn == Config::BTN_2P_LANE8_B) curPs.scratchDownActive = isDown;
+            }
+
+            // START ボタン検出（各プレイヤー独立）
+            bool isStartBtn = (playerIdx == 0) ? (btn == Config::BTN_EXIT)
+                                               : (btn == Config::BTN_2P_EXIT);
+            if (isStartBtn) {
+                if (isDown) {
+                    uint32_t& lastPress = (playerIdx == 0) ? lastStartPressTime : last2PStartPressTime;
+                    if (now - lastPress < 500) {
+                        PlayerState& ps = players[playerIdx];
+                        if (ps.suddenPlus > 0) {
+                            ps.backupSudden = ps.suddenPlus;
+                            ps.suddenPlus = 0;
+                        } else {
+                            ps.suddenPlus = ps.backupSudden;
+                        }
+                        lastPress = 0;
+                    } else {
+                        (playerIdx == 0 ? lastStartPressTime : last2PStartPressTime) = now;
+                    }
+                }
+                if (playerIdx == 0) startButtonPressed = isDown;
+                else                start2PButtonPressed = isDown;
+            }
+
+            // 1P のみ: DECIDE/EFFECT/強制終了
+            if (playerIdx == 0) {
+                if (btn == Config::SYS_BTN_DECIDE) decideButtonPressed = isDown;
+                if (btn == Config::BTN_EFFECT) effectButtonPressed = isDown;
+                if (startButtonPressed && effectButtonPressed) {
+                    engine1P.forceFail();
+                    engine2P.forceFail();
+                    return false;
+                }
+            }
+
+            // HS変更（STARTボタン + レーンキー、各プレイヤー独立）
+            bool thisPlayerStart = (playerIdx == 0) ? startButtonPressed : start2PButtonPressed;
+            if (isDown && thisPlayerStart && lane >= 1 && lane <= 7) {
+                PlayerState& ps = players[playerIdx];
+                PlayEngine& eng = (playerIdx == 0) ? engine1P : engine2P;
+                double currentBPM = eng.getBpmFromMs(cur_ms);
+                int effectiveGN = (int)(Config::HS_BASE / (std::max(0.01, ps.highSpeed) * currentBPM));
+                if (lane == 1)      effectiveGN += 10;
+                else if (lane == 2) effectiveGN -= 10;
+                else if (lane == 3) effectiveGN += 25;
+                else if (lane == 4) effectiveGN -= 25;
+                else if (lane == 5) effectiveGN += 50;
+                else if (lane == 6) effectiveGN -= 50;
+                else if (lane == 7) effectiveGN = 1200;
+                ps.greenNumber = std::clamp(effectiveGN, 1, 9999);
+                ps.highSpeed = (double)Config::HS_BASE / (ps.greenNumber * currentBPM);
+                continue;
+            }
+
+            // プレイキー処理
+            if (lane != -1) {
+                PlayEngine& eng = (playerIdx == 0) ? engine1P : engine2P;
+                PlayerState& ps = players[playerIdx];
+                handlePlayerButton(playerIdx, lane, isDown, hit_ms, now, eng, ps);
+            }
+        }
+    }
+
+    // スクラッチ + START でサドプラ/リフト操作（1P・2P 各独立）
+    for (int p = 0; p < 2; ++p) {
+        bool pStart = (p == 0) ? startButtonPressed : start2PButtonPressed;
+        if (pStart) {
+            PlayerState& ps = players[p];
+            if (ps.scratchUpActive || ps.scratchDownActive) {
+                int delta = ps.scratchUpActive ? -2 : 2;
+                if (ps.suddenPlus == 0) {
+                    ps.lift = std::clamp(ps.lift + delta, 0, 1000);
+                } else {
+                    ps.suddenPlus = std::clamp(ps.suddenPlus + delta, 0, 1000);
+                    if (ps.suddenPlus > 0) ps.backupSudden = ps.suddenPlus;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+void ScenePlay::updateAssistForPlayer(double cur_ms, PlayEngine& engine, PlayerState& ps) {
+    if (ps.isPlayerFailed) return;
+    uint32_t now = SDL_GetTicks();
+    const auto& notes = engine.getNotes();
+    for (size_t i = ps.drawStartIndex; i < notes.size(); ++i) {
+        const auto& n = notes[i];
+        if (n.played || n.isBGM) continue;
+        if (n.target_ms > cur_ms + 100) break;
+
+        if (isAutoLane(n.lane)) {
+            if (!n.isBeingPressed && cur_ms >= n.target_ms) {
+                bool isPartialAuto = (Config::ASSIST_OPTION != 7);
+                int resultJudge = engine.processHit(n.lane, n.target_ms, now, isPartialAuto);
+
+                bool found = false;
+                for (size_t ei = 0; ei < ps.effectCount; ++ei) {
+                    if (ps.effectsBuf[ei].lane == n.lane) {
+                        ps.effectsBuf[ei].startTime = now;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && ps.effectCount < PlayerState::MAX_EFFECTS)
+                    ps.effectsBuf[ps.effectCount++] = {n.lane, now};
+                if (ps.bombCount < PlayerState::MAX_BOMBS)
+                    ps.bombAnimsBuf[ps.bombCount++] = {n.lane, now, 2};
+
+                if (n.isLN) {
+                    ps.lnHitJudge[n.lane]     = resultJudge;
+                    ps.lastLNBombTime[n.lane] = now;
+                }
+            }
+            if (n.isLN && n.isBeingPressed && cur_ms >= n.target_ms + n.duration_ms) {
+                engine.processRelease(n.lane, n.target_ms + n.duration_ms, now);
+                ps.lnHitJudge[n.lane]     = 0;
+                ps.lastLNBombTime[n.lane] = 0;
+            }
+        }
+    }
+}
+
+void ScenePlay::renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
+                                   PlayEngine& engine, PlayerState& ps,
+                                   int side, double cur_ms, int64_t cur_y,
+                                   int fps, uint32_t now, double progress,
+                                   const BMSHeader& header) {
+    renderer.switchSide(side);
+
+    // プレイヤー別のSUD+/LIFTをConfigに一時反映
+    int savedSudden = Config::SUDDEN_PLUS;
+    int savedLift   = Config::LIFT;
+    double savedHS  = Config::HIGH_SPEED;
+    Config::SUDDEN_PLUS = ps.suddenPlus;
+    Config::LIFT        = ps.lift;
+    Config::HIGH_SPEED  = ps.highSpeed;
+
+    double pixels_per_y = (ps.highSpeed * 60000.0) / (475.0 * header.resolution);
+    double max_visible_y = (double)Config::VISIBLE_PX / std::max(1e-9, pixels_per_y) + 1000.0;
+
+    int scratchStatus = ps.scratchUpActive ? 1 : (ps.scratchDownActive ? 2 : 0);
+    renderer.renderLanes(ren, progress, scratchStatus);
+
+    for (const auto& bl : engine.getBeatLines()) {
+        double diff_y = (double)(bl.y - cur_y);
+        if (diff_y > -2000.0 && diff_y < max_visible_y)
+            renderer.renderBeatLine(ren, diff_y, pixels_per_y);
+    }
+
+    const auto& allNotes = engine.getNotes();
+    while (ps.drawStartIndex < allNotes.size()
+           && allNotes[ps.drawStartIndex].target_ms < cur_ms - 1000.0
+           && !allNotes[ps.drawStartIndex].isBeingPressed) {
+        ps.drawStartIndex++;
+    }
+
+    for (size_t i = ps.drawStartIndex; i < allNotes.size(); ++i) {
+        const auto& n = allNotes[i];
+        double y_diff = (double)(n.y - cur_y);
+        if (!n.isBeingPressed && y_diff > max_visible_y) break;
+        if ((!n.played || n.isBeingPressed) && !n.isBGM && !n.isLN) {
+            if ((double)(n.y - cur_y) > -5000.0)
+                renderer.renderNote(ren, n, cur_y, pixels_per_y, isAutoLane(n.lane));
+        }
+    }
+    for (size_t i = ps.drawStartIndex; i < allNotes.size(); ++i) {
+        const auto& n = allNotes[i];
+        double y_diff = (double)(n.y - cur_y);
+        if (!n.isBeingPressed && y_diff > max_visible_y) break;
+        if ((!n.played || n.isBeingPressed) && !n.isBGM && n.isLN) {
+            if ((double)(n.y + n.l - cur_y) > -5000.0)
+                renderer.renderNote(ren, n, cur_y, pixels_per_y, isAutoLane(n.lane));
+        }
+    }
+
+    renderer.renderSuddenLift(ren);
+    renderer.renderEffects(ren, ps.effectsBuf, ps.effectCount, ps.lanePressed, now);
+    renderer.renderBombs(ren, ps.bombAnimsBuf, ps.bombCount, now);
+
+    auto& judge = engine.getCurrentJudge();
+    if (judge.active) {
+        float p_raw = (float)(now - judge.startTime) / 500.0f;
+        if (p_raw >= 1.0f) judge.active = false;
+        else {
+            if (judge.kind == JudgeKind::PGREAT || (now / 32) % 2 != 0)
+                renderer.renderJudgment(ren, judge.kind, 0.0f, engine.getStatus().combo);
+            if (judge.isFast || judge.isSlow)
+                renderer.renderFastSlow(ren, judge.isFast, judge.isSlow, p_raw, judge.diffMs);
+        }
+    }
+
+    renderer.renderCombo(ren, engine.getStatus().combo);
+    renderer.renderGauge(ren, engine.getStatus().gauge, Config::GAUGE_OPTION, engine.getStatus().isFailed);
+
+    if (ps.isPlayerFailed) {
+        int cx = renderer.getLaneCenterX();
+        renderer.drawTextCached(ren, "FAILED", cx, 300, {255, 50, 50, 255}, true, true);
+    }
+
+    Config::SUDDEN_PLUS = savedSudden;
+    Config::LIFT        = savedLift;
+    Config::HIGH_SPEED  = savedHS;
+}
+
+bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
+                       const std::string& path1P, const std::string& path2P) {
+    LOG_INFO("ScenePlay", "=== runVS() start: 1P='%s' 2P='%s' ===", path1P.c_str(), path2P.c_str());
+    numPlayers = 2;
+    SoundManager& snd = SoundManager::getInstance();
+
+    snd.clear();
+    SDL_RenderClear(ren); SDL_RenderPresent(ren); SDL_Delay(200);
+    { SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren); SDL_RenderPresent(ren); }
+
+    BMSData data1P, data2P;
+    auto loadChart = [](const std::string& path) -> BMSData {
+        if (BmsLoader::isBmsFile(path))
+            return BmsLoader::load(path, [](float) { SDL_Event e; while (SDL_PollEvent(&e)); });
+        else
+            return BmsonLoader::load(path, [](float) { SDL_Event e; while (SDL_PollEvent(&e)); });
+    };
+    data1P = loadChart(path1P);
+    data2P = loadChart(path2P);
+    if (data1P.sound_channels.empty() || data2P.sound_channels.empty()) return true;
+
+    vsHeaders[0] = data1P.header;
+    vsHeaders[1] = data2P.header;
+
+    players[0].reset();
+    players[1].reset();
+    players[0].greenNumber = Config::GREEN_NUMBER;
+    players[0].highSpeed   = (double)Config::HS_BASE / (std::max(1, players[0].greenNumber) * data1P.header.bpm);
+    players[0].suddenPlus  = Config::SUDDEN_PLUS;
+    players[0].lift        = Config::LIFT;
+    players[0].backupSudden = Config::SUDDEN_PLUS > 0 ? Config::SUDDEN_PLUS : 300;
+    players[1].greenNumber = Config::GREEN_NUMBER;
+    players[1].highSpeed   = (double)Config::HS_BASE / (std::max(1, players[1].greenNumber) * data2P.header.bpm);
+    players[1].suddenPlus  = Config::SUDDEN_PLUS;
+    players[1].lift        = Config::LIFT;
+    players[1].backupSudden = Config::SUDDEN_PLUS > 0 ? Config::SUDDEN_PLUS : 300;
+    Config::HIGH_SPEED = players[0].highSpeed;
+
+    PlayEngine engine1P, engine2P;
+    engine1P.init(data1P);
+    engine2P.init(data2P);
+    engine2P.skipBGM = true;
+
+    renderer.rebuildBothLayouts();
+
+    BgaManager bga;
+    bga.init(data1P.bga_images.size());
+    bga.setLayout(Config::SCREEN_WIDTH / 2);
+    bga.setEvents(data1P.bga_events);
+    bga.setLayerEvents(data1P.layer_events);
+    bga.setPoorEvents(data1P.poor_events);
+
+    isAssistUsed          = (Config::ASSIST_OPTION > 0);
+    startButtonPressed    = false;
+    start2PButtonPressed  = false;
+    decideButtonPressed   = false;
+    effectButtonPressed   = false;
+    lastStartPressTime    = 0;
+    last2PStartPressTime  = 0;
+
+    std::string bmsonDir = "";
+    { size_t ls = path1P.find_last_of("/\\");
+      bmsonDir = (ls != std::string::npos) ? path1P.substr(0, ls + 1) : Config::ROOT_PATH; }
+    bga.setBgaDirectory(bmsonDir);
+    if (!data1P.header.bga_video.empty())
+        bga.loadBgaFile(bmsonDir + data1P.header.bga_video, ren);
+    for (auto const& [id, filename] : data1P.bga_images)
+        bga.registerPath(id, filename);
+
+    std::string bmsonBaseName = "";
+    { size_t ls = path1P.find_last_of("/\\");
+      size_t ld = path1P.find_last_of(".");
+      bmsonBaseName = (ld != std::string::npos && ld > ls)
+          ? path1P.substr(ls + 1, ld - ls - 1) : data1P.header.title; }
+
+    auto showLoading = [&](const char*) {
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren); SDL_RenderPresent(ren);
+        SDL_Event e; while (SDL_PollEvent(&e));
+    };
+    showLoading("BOXWAV");
+    snd.preloadBoxIndex(bmsonDir, bmsonBaseName);
+
+    std::set<std::string> soundSet;
+    std::vector<std::string> soundListBGM, soundListKeys;
+    auto collectSounds = [&](const BMSData& data) {
+        for (const auto& ch : data.sound_channels) {
+            if (ch.name.empty() || soundSet.count(ch.name)) continue;
+            soundSet.insert(ch.name);
+            bool bgmOnly = !ch.notes.empty() &&
+                std::all_of(ch.notes.begin(), ch.notes.end(),
+                            [](const BMSNote& n) { return n.x < 1 || n.x > 8; });
+            if (bgmOnly) soundListBGM.push_back(ch.name);
+            else          soundListKeys.push_back(ch.name);
+        }
+    };
+    collectSounds(data1P);
+    collectSounds(data2P);
+    std::vector<std::string> soundList;
+    soundList.reserve(soundListBGM.size() + soundListKeys.size());
+    soundList.insert(soundList.end(), soundListBGM.begin(), soundListBGM.end());
+    soundList.insert(soundList.end(), soundListKeys.begin(), soundListKeys.end());
+
+    showLoading("AUDIO");
+    snd.loadSoundsInBulk(soundList, bmsonDir, bmsonBaseName, [&](int cnt, const std::string&) {
+        if (cnt % 200 == 0) showLoading("AUDIO");
+    });
+
+    double videoOffsetMs = 0.0;
+    if (data1P.header.bga_offset != 0) {
+        double cb = data1P.header.bpm; int64_t cy = 0; double cm = 0.0;
+        auto sb = data1P.bpm_events;
+        std::sort(sb.begin(), sb.end(), [](const BPMEvent& a, const BPMEvent& b){ return a.y < b.y; });
+        for (const auto& bE : sb) {
+            if (bE.y >= data1P.header.bga_offset) break;
+            cm += (double)(bE.y - cy) * 60000.0 / (cb * data1P.header.resolution);
+            cy = bE.y; cb = bE.bpm;
+        }
+        if (cy < data1P.header.bga_offset)
+            cm += (double)(data1P.header.bga_offset - cy) * 60000.0 / (cb * data1P.header.resolution);
+        videoOffsetMs = cm;
+    }
+
+    double max_target_ms = 0;
+    for (const auto& n : engine1P.getNotes())
+        if (!n.isBGM) max_target_ms = std::max(max_target_ms, n.target_ms);
+    for (const auto& n : engine2P.getNotes())
+        if (!n.isBGM) max_target_ms = std::max(max_target_ms, n.target_ms);
+
+    SDL_JoystickID joy1ID = -1, joy2ID = -1;
+    if (SDL_NumJoysticks() > 0) { SDL_Joystick* j = SDL_JoystickOpen(0); if (j) joy1ID = SDL_JoystickInstanceID(j); }
+    if (SDL_NumJoysticks() > 1) { SDL_Joystick* j = SDL_JoystickOpen(1); if (j) joy2ID = SDL_JoystickInstanceID(j); }
+
+    // 待機ループ
+    startTicks = SDL_GetTicks() + 99999999;
+    bool waiting = true;
+    while (waiting) {
+        uint32_t now = SDL_GetTicks();
+        if (!processInputVS(-2000.0, now, engine1P, engine2P, joy1ID, joy2ID)) return false;
+        if (decideButtonPressed && !startButtonPressed) waiting = false;
+        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255); SDL_RenderClear(ren);
+        renderer.renderBackground(ren);
+        renderer.switchSide(1); renderer.renderLanes(ren, 0.0, 0);
+        renderer.switchSide(2); renderer.renderLanes(ren, 0.0, 0);
+        renderer.drawTextCached(ren, "PRESS DECIDE BUTTON TO START",
+                                Config::SCREEN_WIDTH / 2, 450, {255, 255, 255, 255}, false, true);
+        renderer.drawTextCached(ren, "VS MODE",
+                                Config::SCREEN_WIDTH / 2, 350, {255, 165, 0, 255}, true, true);
+        SDL_RenderPresent(ren);
+#ifdef __SWITCH__
+        if (!appletMainLoop()) return false;
+#endif
+    }
+    startButtonPressed = false; decideButtonPressed = false;
+
+    uint32_t start_ticks = SDL_GetTicks() + 2000;
+    startTicks = start_ticks;
+    uint32_t lastFpsTime = SDL_GetTicks();
+    int frameCount = 0, fps = 0;
+    bool playing = true, isAborted = false;
+
+    while (playing) {
+        uint32_t now = SDL_GetTicks();
+        double cur_ms = (double)((int64_t)now - (int64_t)start_ticks);
+        bga.syncTime(cur_ms - videoOffsetMs);
+
+        if (!processInputVS(cur_ms, now, engine1P, engine2P, joy1ID, joy2ID)) {
+            isAborted = true; playing = false; break;
+        }
+
+        updateAssistForPlayer(cur_ms, engine1P, players[0]);
+        updateAssistForPlayer(cur_ms, engine2P, players[1]);
+
+        // LN持続ボム
+        for (int p = 0; p < 2; ++p) {
+            PlayEngine& eng = (p == 0) ? engine1P : engine2P;
+            PlayerState& ps = players[p];
+            if (ps.isPlayerFailed) continue;
+            const auto& ln = eng.getNotes();
+            for (size_t i = ps.drawStartIndex; i < ln.size(); ++i) {
+                const auto& n = ln[i];
+                if (n.isBGM || !n.isLN || !n.isBeingPressed) continue;
+                if (n.target_ms > cur_ms + 500.0) break;
+                if (ps.lnHitJudge[n.lane] >= 2 && now - ps.lastLNBombTime[n.lane] >= 150) {
+                    ps.lastLNBombTime[n.lane] = now;
+                    int bt = (ps.lnHitJudge[n.lane] == 3) ? 1 : 2;
+                    if (ps.bombCount < PlayerState::MAX_BOMBS)
+                        ps.bombAnimsBuf[ps.bombCount++] = {n.lane, now, bt};
+                }
+            }
+        }
+
+        engine1P.update(cur_ms + 10.0, now);
+        engine2P.update(cur_ms + 10.0, now);
+
+        if (engine1P.getStatus().isFailed && !players[0].isPlayerFailed) players[0].isPlayerFailed = true;
+        if (engine2P.getStatus().isFailed && !players[1].isPlayerFailed) players[1].isPlayerFailed = true;
+        if (players[0].isPlayerFailed && players[1].isPlayerFailed) playing = false;
+
+        double progress = (max_target_ms > 0) ? std::clamp(cur_ms / max_target_ms, 0.0, 1.0) : 0.0;
+        int64_t cur_y_1P = engine1P.getYFromMs(cur_ms);
+        int64_t cur_y_2P = engine2P.getYFromMs(cur_ms);
+
+        SDL_SetRenderDrawColor(ren, 10, 10, 15, 255); SDL_RenderClear(ren);
+        renderer.renderBackground(ren);
+
+        renderPlayerField(ren, renderer, engine1P, players[0], 1,
+                          cur_ms, cur_y_1P, fps, now, progress, vsHeaders[0]);
+        renderPlayerField(ren, renderer, engine2P, players[1], 2,
+                          cur_ms, cur_y_2P, fps, now, progress, vsHeaders[1]);
+
+        renderer.drawTextCached(ren, "VS", Config::SCREEN_WIDTH / 2, 10,
+                                {255, 165, 0, 255}, true, true);
+        SDL_RenderPresent(ren);
+
+        if (cur_ms > max_target_ms + 1500.0) playing = false;
+        frameCount++;
+        if (now - lastFpsTime >= 1000) { fps = frameCount; frameCount = 0; lastFpsTime = now; }
+#ifdef __SWITCH__
+        if (!appletMainLoop()) { isAborted = true; playing = false; break; }
+#endif
+    }
+
+    vsStatuses[0] = engine1P.getStatus();
+    vsStatuses[1] = engine2P.getStatus();
+    LOG_INFO("ScenePlay", "=== VS Play loop end ===");
+
+    snd.clear();
+    bga.cleanup();
+    // 【CRITICAL-3修正】非同期保存
+    Config::markDirty();
+    Config::saveAsync();
+    if (isAborted) return false;
+    return true;
+}
+
+const PlayStatus& ScenePlay::getStatus(int playerIdx) const {
+    if (numPlayers == 2 && playerIdx >= 0 && playerIdx < 2)
+        return vsStatuses[playerIdx];
+    return status;
+}
+
+const BMSHeader& ScenePlay::getHeader(int playerIdx) const {
+    if (numPlayers == 2 && playerIdx >= 0 && playerIdx < 2)
+        return vsHeaders[playerIdx];
+    return currentHeader;
 }

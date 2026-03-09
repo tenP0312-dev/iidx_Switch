@@ -10,17 +10,24 @@
 #include "SceneResult.hpp"
 #include "SceneOption.hpp" 
 #include "SceneGameOver.hpp" // 追加
+#include "Scene2PDiffSelect.hpp"
 #include "SongManager.hpp" // 追加：スキャン実行用
 #include "Logger.hpp"
 #include <fstream>
 #include <unistd.h>
-#include <cstdio> 
+#include <cstdio>
+#include <utility>  // std::move
 
 #ifdef __SWITCH__
 #include <switch.h>
 
 extern "C" {
-    u32 __nx_applet_heap_size = 2867ULL * 1024ULL * 1024ULL;
+    // 【CRITICAL-1修正】2867MB → 2200MB
+    // 旧値 2867MB はアプレットモードの安全上限(~2500MB)を超えており、
+    // OS バージョン・常駐アプレットの状況によって svcSetHeapSize が失敗し
+    // 起動直後クラッシュする。音声バッファ(512MB) + 動画 + SDL = ~1GB 以下で収まるため
+    // 2200MB でも十分なマージンがある。実測後に調整すること。
+    u32 __nx_applet_heap_size = 2200ULL * 1024ULL * 1024ULL;
 }
 #endif
 
@@ -40,10 +47,14 @@ int main(int argc, char* argv[]) {
     socketInitializeDefault();
     nxlinkStdio();
 
+    // 【指摘(c)修正】fd dup ループはデバッグ用コード。
+    // リリースビルドには含めず -DNXLINK_DEBUG 時のみ有効にする。
+#ifdef NXLINK_DEBUG
     for (int i = 0; i < 1024; i++) {
         int fd = dup(STDOUT_FILENO);
         if (fd >= 0) close(fd);
     }
+#endif
 #endif
 
     Config::load();
@@ -75,6 +86,7 @@ int main(int argc, char* argv[]) {
     SceneResult sceneResult;
     SceneOption sceneOption; 
     SceneGameOver sceneGameOver; // 追加
+    Scene2PDiffSelect scene2PDiffSelect; // ★2P VS
 
     // ★ステージ管理用変数
     int globalCurrentStage = 1;
@@ -219,65 +231,94 @@ int main(int argc, char* argv[]) {
                     SDL_RenderPresent(ren); 
                     SDL_Delay(500); 
 
-                    // プレイ実行
-                    LOG_INFO("main", "=== PLAY start stage=%d path='%s' heap=%lluMB ===",
-                             effectiveStage, selectedPath.c_str(), Logger::heapUsedMB());
-                    bool playFinishedNormal = scenePlay.run(ren, renderer, selectedPath);
-                    PlayStatus status = scenePlay.getStatus();
-                    LOG_INFO("main", "=== PLAY end normal=%d heap=%lluMB ===",
-                             playFinishedNormal ? 1 : 0, Logger::heapUsedMB());
+                    bool playFinishedNormal = false;
 
-                    if (playFinishedNormal) {
-                        // リザルト表示
-                        sceneResult.run(ren, renderer, status, scenePlay.getHeader());
+                    if (Config::PLAY_MODE == 1) {
+                        // ─── ★2P VS モード ───
+                        const auto& group = sceneSelect.songGroups[sceneSelect.selectedIndex];
+                        int p1DiffIdx = group.currentDiffIdx;
+                        std::string path2P = scene2PDiffSelect.run(ren, renderer,
+                                                 sceneSelect.songCache, group, p1DiffIdx);
+                        if (path2P.empty()) {
+                            // キャンセル → 選曲に戻る
+                            break;
+                        }
 
+                        LOG_INFO("main", "=== VS PLAY start 1P='%s' 2P='%s' ===",
+                                 selectedPath.c_str(), path2P.c_str());
+                        playFinishedNormal = scenePlay.runVS(ren, renderer, selectedPath, path2P);
+
+                        if (playFinishedNormal) {
+                            sceneResult.runVS(ren, renderer,
+                                              scenePlay.getStatus(0), scenePlay.getHeader(0),
+                                              scenePlay.getStatus(1), scenePlay.getHeader(1));
+                        }
+                        // 2P VS 時はスコア保存なし、選曲に戻る
                         if (isFreePlay) {
-                            // フリープレイ時は解禁状態(6)を維持して即選曲へ戻る
                             sceneSelect.init(false, ren, renderer, 6);
                         } else {
-                            // --- スタンダードモード進行ロジック ---
-                            if (status.isFailed) {
-                                sceneGameOver.init();
-                                currentState = AppState::GAMEOVER;
-                                LOG_INFO("main", "stage=%d FAILED -> GAMEOVER", globalCurrentStage);
+                            sceneSelect.init(false, ren, renderer, effectiveStage);
+                        }
+                    } else {
+                        // ─── 既存1Pモード（変更なし） ───
+                        LOG_INFO("main", "=== PLAY start stage=%d path='%s' heap=%lluMB ===",
+                                 effectiveStage, selectedPath.c_str(), Logger::heapUsedMB());
+                        playFinishedNormal = scenePlay.run(ren, renderer, selectedPath);
+                        // 【CRITICAL-4修正】getStatus() は non-const 版を呼び出し std::move で
+                        // gaugeHistory(最大8KB)のヒープコピーを回避する。
+                        PlayStatus status = std::move(scenePlay.getStatus());
+                        LOG_INFO("main", "=== PLAY end normal=%d heap=%lluMB ===",
+                                 playFinishedNormal ? 1 : 0, Logger::heapUsedMB());
+
+                        if (playFinishedNormal) {
+                            sceneResult.run(ren, renderer, status, scenePlay.getHeader());
+
+                            if (isFreePlay) {
+                                sceneSelect.init(false, ren, renderer, 6);
                             } else {
-                                int prevStage = globalCurrentStage;
-                                if (globalCurrentStage < 3) {
-                                    globalCurrentStage++;
-                                } 
-                                else if (globalCurrentStage == 3) {
-                                    globalCurrentStage = 4;
-                                }
-                                else if (globalCurrentStage == 4) {
-                                    if (sceneSelect.isExtraFolderSelected()) {
-                                        globalCurrentStage = 5; 
-                                        currentState = AppState::ONEMORE_ENTRY;
-                                        // onemoreStartTime は ONEMORE_ENTRY ステート内で初回フレームに記録する
-                                    } else {
+                                // --- スタンダードモード進行ロジック ---
+                                if (status.isFailed) {
+                                    sceneGameOver.init();
+                                    currentState = AppState::GAMEOVER;
+                                    LOG_INFO("main", "stage=%d FAILED -> GAMEOVER", globalCurrentStage);
+                                } else {
+                                    int prevStage = globalCurrentStage;
+                                    if (globalCurrentStage < 3) {
+                                        globalCurrentStage++;
+                                    } 
+                                    else if (globalCurrentStage == 3) {
+                                        globalCurrentStage = 4;
+                                    }
+                                    else if (globalCurrentStage == 4) {
+                                        if (sceneSelect.isExtraFolderSelected()) {
+                                            globalCurrentStage = 5; 
+                                            currentState = AppState::ONEMORE_ENTRY;
+                                        } else {
+                                            sceneGameOver.init();
+                                            currentState = AppState::GAMEOVER;
+                                        }
+                                    }
+                                    else if (globalCurrentStage == 5) {
                                         sceneGameOver.init();
                                         currentState = AppState::GAMEOVER;
                                     }
-                                }
-                                else if (globalCurrentStage == 5) {
-                                    sceneGameOver.init();
-                                    currentState = AppState::GAMEOVER;
-                                }
-                                if (prevStage != globalCurrentStage) {
-                                    LOG_INFO("main", "stage advance: %d -> %d", prevStage, globalCurrentStage);
-                                }
-                                
-                                if (currentState == AppState::SELECT) {
-                                    sceneSelect.init(false, ren, renderer, globalCurrentStage);
+                                    if (prevStage != globalCurrentStage) {
+                                        LOG_INFO("main", "stage advance: %d -> %d", prevStage, globalCurrentStage);
+                                    }
+                                    
+                                    if (currentState == AppState::SELECT) {
+                                        sceneSelect.init(false, ren, renderer, globalCurrentStage);
+                                    }
                                 }
                             }
-                        }
-                    } else {
-                        // 中断時
-                        if (isFreePlay) {
-                            sceneSelect.init(false, ren, renderer, 6);
                         } else {
-                            sceneGameOver.init();
-                            currentState = AppState::GAMEOVER;
+                            // 中断時
+                            if (isFreePlay) {
+                                sceneSelect.init(false, ren, renderer, 6);
+                            } else {
+                                sceneGameOver.init();
+                                currentState = AppState::GAMEOVER;
+                            }
                         }
                     }
 
@@ -328,6 +369,10 @@ int main(int argc, char* argv[]) {
         if (quitApp) break;
     }
 
+    // 【CRITICAL-3修正】アプリ終了前に未書き込みの設定を確実に保存する。
+    // saveAsync() のスレッドが動いている場合は完了を待つ。
+    Config::flushSave();
+
     if (joy) SDL_JoystickClose(joy);
     renderer.cleanup();
     SoundManager::getInstance().cleanup();
@@ -341,13 +386,3 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
-
-
-
-
-
-
-
-
-
-

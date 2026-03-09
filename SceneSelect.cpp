@@ -88,11 +88,13 @@ void SceneSelect::applySort() {
     if (songGroups.empty()) return;
 
     switch (currentSort) {
-        case SortMode::ALPHABET:    Config::SORT_NAME = "TITLE"; break;
-        case SortMode::LEVEL:        Config::SORT_NAME = "LEVEL"; break;
-        case SortMode::CLEAR_LAMP:  Config::SORT_NAME = "CLEAR"; break;
-        case SortMode::SCORE:        Config::SORT_NAME = "SCORE"; break;
-        case SortMode::BPM:          Config::SORT_NAME = "BPM"; break;
+        case SortMode::ALPHABET:    Config::SORT_NAME = "TITLE";  break;
+        case SortMode::LEVEL:        Config::SORT_NAME = "LEVEL";  break;
+        case SortMode::CLEAR_LAMP:  Config::SORT_NAME = "CLEAR";  break;
+        case SortMode::SCORE:        Config::SORT_NAME = "SCORE";  break;
+        case SortMode::BPM:          Config::SORT_NAME = "BPM";   break;
+        case SortMode::ARTIST:      Config::SORT_NAME = "ARTIST"; break;
+        case SortMode::NOTES:        Config::SORT_NAME = "NOTES";  break;
         default:                    Config::SORT_NAME = "DEFAULT"; break;
     }
 
@@ -127,6 +129,14 @@ void SceneSelect::applySort() {
                 break;
             case SortMode::BPM:
                 if (sa.bpm != sb.bpm) return sa.bpm < sb.bpm;
+                break;
+            case SortMode::ARTIST:
+                // アーティスト名昇順。同名なら曲名で2次ソート。
+                if (sa.artist != sb.artist) return sa.artist < sb.artist;
+                break;
+            case SortMode::NOTES:
+                // ノーツ数昇順。同数なら曲名で2次ソート。
+                if (sa.totalNotes != sb.totalNotes) return sa.totalNotes < sb.totalNotes;
                 break;
             default: break;
         }
@@ -384,14 +394,14 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
                     continue;
                 }
 
-                if (btn == Config::SYS_BTN_UP) {
+                if (btn == Config::SYS_BTN_UP && !songGroups.empty()) {
                     selectedIndex = (selectedIndex - 1 + (int)songGroups.size()) % (int)songGroups.size();
-                    syncDifficultyWithPreferredSlot(); 
-                    lastScrollTime = currentTime + 250; 
+                    syncDifficultyWithPreferredSlot();
+                    lastScrollTime = currentTime + 250;
                 }
-                else if (btn == Config::SYS_BTN_DOWN) {
+                else if (btn == Config::SYS_BTN_DOWN && !songGroups.empty()) {
                     selectedIndex = (selectedIndex + 1) % (int)songGroups.size();
-                    syncDifficultyWithPreferredSlot(); 
+                    syncDifficultyWithPreferredSlot();
                     lastScrollTime = currentTime + 250;
                 }
                 else if (btn == Config::SYS_BTN_BACK) {
@@ -577,14 +587,14 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
 
     if (currentTime > lastScrollTime) {
         if (currentState == SelectState::SELECT_SONG && !isShowingExitDialog) {
-            if (scrUpPressed) {
+            if (scrUpPressed && !songGroups.empty()) {
                 selectedIndex = (selectedIndex - 1 + (int)songGroups.size()) % (int)songGroups.size();
                 syncDifficultyWithPreferredSlot();
-                lastScrollTime = currentTime + 45; 
-            } else if (scrDownPressed) {
+                lastScrollTime = currentTime + 45;
+            } else if (scrDownPressed && !songGroups.empty()) {
                 selectedIndex = (selectedIndex + 1) % (int)songGroups.size();
                 syncDifficultyWithPreferredSlot();
-                lastScrollTime = currentTime + 45; 
+                lastScrollTime = currentTime + 45;
             }
         }
     }
@@ -601,7 +611,8 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
     if (previewPending && (currentTime - previewPendingStartTime >= PREVIEW_DELAY_MS)) {
         previewPending = false;
         if (currentState == SelectState::SELECT_SONG) {
-            if (!songGroups.empty() && !songGroups[selectedIndex].isFolder) {
+            if (!songGroups.empty() && !songGroups[selectedIndex].isFolder &&
+                !songGroups[selectedIndex].songIndices.empty()) {
                 const auto& g = songGroups[selectedIndex];
                 const auto& entry = songCache[g.songIndices[g.currentDiffIdx]];
                 if (!entry.previewPath.empty()) {
@@ -635,6 +646,7 @@ bool SceneSelect::isOneMoreFolderSelected() const {
 
 void SceneSelect::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& renderer) {}
 void SceneSelect::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer) {}
+
 
 
 

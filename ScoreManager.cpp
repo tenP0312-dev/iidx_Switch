@@ -119,14 +119,18 @@ void ScoreManager::saveIfBest(const std::string& title, const std::string& chart
         return;
     }
 
+    // MORE NOTES (EX_OPTION==3) はノーツ数が変わるため、スコア・コンボは参考値にならない。
+    // クリアランプのみ保存し、スコア・コンボ更新は行わない。
+    const bool isMoreNotes = (Config::EX_OPTION == 3);
+
     BestScore currentBest = loadScore(title, chartName, totalNotes);
     int currentExScore = calculateExScore(status.pGreatCount, status.greatCount);
 
     ClearType currentType = status.clearType;
 
-    bool scoreUpdated = (currentExScore > currentBest.exScore);
-    bool lampUpdated = (static_cast<int>(currentType) > static_cast<int>(currentBest.clearType));
-    bool comboUpdated = (status.maxCombo > currentBest.maxCombo);
+    bool scoreUpdated = !isMoreNotes && (currentExScore > currentBest.exScore);
+    bool lampUpdated  = (static_cast<int>(currentType) > static_cast<int>(currentBest.clearType));
+    bool comboUpdated = !isMoreNotes && (status.maxCombo > currentBest.maxCombo);
 
     // スコア、ランプ、コンボのいずれかが更新されたら保存
     if (scoreUpdated || lampUpdated || comboUpdated) {
@@ -152,7 +156,7 @@ void ScoreManager::saveIfBest(const std::string& title, const std::string& chart
         newBest.clearType = (lampUpdated ? currentType      : currentBest.clearType);
         newBest.isClear   = (newBest.clearType >= ClearType::DAN_CLEAR);
 
-        // --- 【追加】今回のプレイの推移を保存対象にする ---
+        // ゲージ推移: スコア更新時のみ保存（MORE NOTES時はスコア非更新なので継承）
         newBest.gaugeHistory = (scoreUpdated ? status.gaugeHistory : currentBest.gaugeHistory);
 
         // ファイル書き込み (継承ロジック)
@@ -171,6 +175,7 @@ void ScoreManager::saveIfBest(const std::string& title, const std::string& chart
         scoreCache[uniqueId] = newBest;
     }
 }
+
 
 
 

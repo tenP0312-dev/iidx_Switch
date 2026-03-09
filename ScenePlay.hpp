@@ -10,27 +10,79 @@
 
 // 前方宣言
 class PlayEngine;
-class BgaManager; 
+class BgaManager;
+
+// ============================================================
+//  ★2P VS: 1プレイヤー分の状態
+// ============================================================
+struct PlayerState {
+    static constexpr size_t MAX_EFFECTS = 128;
+    static constexpr size_t MAX_BOMBS   = 128;
+
+    ActiveEffect effectsBuf[MAX_EFFECTS];
+    BombAnim     bombAnimsBuf[MAX_BOMBS];
+    size_t       effectCount = 0;
+    size_t       bombCount   = 0;
+
+    bool lanePressed[9]        = {false};
+    int  lnHitJudge[9]         = {};
+    uint32_t lastLNBombTime[9] = {};
+
+    bool scratchUpActive   = false;
+    bool scratchDownActive = false;
+
+    size_t drawStartIndex = 0;
+
+    // プレイヤー別HS/サドプラ/リフト
+    double highSpeed   = 1.0;
+    int    greenNumber = 300;
+    int    suddenPlus  = 0;
+    int    lift        = 0;
+    int    backupSudden = 300;
+
+    bool isPlayerFailed = false;
+
+    void reset() {
+        effectCount = 0;
+        bombCount   = 0;
+        for (int i = 0; i < 9; ++i) {
+            lanePressed[i]    = false;
+            lnHitJudge[i]     = 0;
+            lastLNBombTime[i] = 0;
+        }
+        scratchUpActive   = false;
+        scratchDownActive = false;
+        drawStartIndex    = 0;
+        isPlayerFailed    = false;
+    }
+};
 
 class ScenePlay {
 public:
+    // 1P用（既存互換）
     bool run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath);
-    const PlayStatus& getStatus() const { return status; }
-    const BMSHeader& getHeader() const { return currentHeader; }
+
+    // ★2P VS用
+    bool runVS(SDL_Renderer* ren, NoteRenderer& renderer,
+               const std::string& path1P, const std::string& path2P);
+
+    // ★2P VS: プレイヤー指定でステータス/ヘッダーを取得
+    const PlayStatus& getStatus(int playerIdx = 0) const;
+    const BMSHeader&  getHeader(int playerIdx = 0) const;
+    int getNumPlayers() const { return numPlayers; }
 
 private:
-    // --- 内部処理用関数（重複を削除し、ここに集約） ---
+    // --- 既存1P用メソッド ---
     bool processInput(double cur_ms, uint32_t now, PlayEngine& engine);
     void updateAssist(double cur_ms, PlayEngine& engine);
-    void renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine, 
-                     BgaManager& bga, 
-                     double cur_ms, int64_t cur_y, int fps, const BMSHeader& header, 
+    void renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
+                     BgaManager& bga,
+                     double cur_ms, int64_t cur_y, int fps, const BMSHeader& header,
                      uint32_t now, double progress);
 
     // --- 補助関数 ---
     bool isAutoLane(int lane);
     int getLaneFromJoystickButton(int btn);
-    // フェードイン/アウト（durationMs: フェード時間ms）
     void fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
                 BgaManager& bga, double cur_ms, int64_t cur_y,
                 const BMSHeader& header, uint32_t baseNow, int durationMs);
@@ -38,13 +90,27 @@ private:
                  BgaManager& bga, double cur_ms, int64_t cur_y,
                  const BMSHeader& header, uint32_t baseNow, int durationMs);
 
+    // --- ★2P VS用メソッド ---
+    bool processInputVS(double cur_ms, uint32_t now,
+                        PlayEngine& engine1P, PlayEngine& engine2P,
+                        SDL_JoystickID joy1ID, SDL_JoystickID joy2ID);
+    void updateAssistForPlayer(double cur_ms, PlayEngine& engine, PlayerState& ps);
+    void renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
+                           PlayEngine& engine, PlayerState& ps,
+                           int side, double cur_ms, int64_t cur_y,
+                           int fps, uint32_t now, double progress,
+                           const BMSHeader& header);
+    void handlePlayerButton(int playerIdx, int lane, bool isDown,
+                            double hit_ms, uint32_t now,
+                            PlayEngine& engine, PlayerState& ps);
+
     // --- メンバ変数 ---
-    // ★修正: effects / bombAnims を std::vector から固定サイズ配列に変更。
-    //        旧実装は reserve(64) していたが、連打譜面で容量を超えた瞬間に
-    //        realloc + コピーが走り、入力応答にスパイクが発生していた。
-    //        リズムゲームでの入力遅延は致命的。
-    //        8レーン × 同時押し = 最大8エフェクト。128で絶対に枯渇しない。
-    //        固定配列なら push/pop が O(1) 保証、ヒープアロケーション ゼロ。
+    int numPlayers = 1;
+    PlayerState players[2];          // ★2P VS用
+    PlayStatus  vsStatuses[2];       // ★2P VS: run終了後にコピー
+    BMSHeader   vsHeaders[2];        // ★2P VS
+
+    // 既存1P用（互換維持）
     static constexpr size_t MAX_EFFECTS = 128;
     static constexpr size_t MAX_BOMBS   = 128;
     ActiveEffect effectsBuf[MAX_EFFECTS];
@@ -52,39 +118,37 @@ private:
     size_t       effectCount = 0;
     size_t       bombCount   = 0;
 
-    PlayStatus status;          
+    PlayStatus status;
     BMSHeader currentHeader;
 
     bool isAssistUsed = false;
-    bool startButtonPressed  = false;     // STARTボタン (HS変更・サドプラ等に使用)
-    bool decideButtonPressed = false;     // DECIDEボタン (待機中の曲開始に使用)
-    bool effectButtonPressed = false;    
+    bool startButtonPressed   = false;
+    bool start2PButtonPressed = false; // ★2P VS: 2PのSTARTボタン状態
+    bool decideButtonPressed  = false;
+    bool effectButtonPressed  = false;
 
-    bool lanePressed[9] = {false}; 
+    bool lanePressed[9] = {false};
 
     bool scratchUpActive = false;
     bool scratchDownActive = false;
 
-    uint32_t lastStartPressTime = 0;
-    uint32_t startTicks = 0; // ★修正(CRITICAL-1): 曲開始時刻。ev.timestamp から cur_ms を計算するために保持。
-    uint32_t lastLNBombTime[9] = {};  // LN押下中ボム: レーンごとの最終発火時刻
-    int      lnHitJudge[9]     = {};  // LN押下時の判定結果 (0=なし,2=GREAT,3=PGREAT)
-    int backupSudden = 300; 
-    
-    // 最適化用インデックス
-    size_t drawStartIndex = 0; 
+    uint32_t lastStartPressTime   = 0;
+    uint32_t last2PStartPressTime = 0; // ★2P VS: 2PのSTARTボタン最終押下時刻
+    uint32_t startTicks = 0;
+    uint32_t lastLNBombTime[9] = {};
+    int      lnHitJudge[9]     = {};
+    int backupSudden = 300;
+
+    size_t drawStartIndex = 0;
+
+    // 【指摘(3-5)修正】pixels_per_y キャッシュ（renderScene 内で使用）
+    // HIGH_SPEED または resolution が変化したときだけ再計算する。
+    mutable double   cachedHS_         = -1.0;
+    mutable int      cachedResolution_ = -1;
+    mutable double   cachedPixelsPerY_  = 1.0;
+    mutable double   cachedMaxVisibleY_ = 10000.0;
 };
 
 #endif
-
-
-
-
-
-
-
-
-
-
 
 

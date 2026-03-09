@@ -1,5 +1,14 @@
 #---------------------------------------------------------------------------------
-# .nroを作成するための Makefile (FFmpeg対応版 / 個別コンパイル)
+# .nroを作成するための Makefile (FFmpeg対応版 / 並列フルビルド)
+#
+# 使い方:
+#   make rebuild     -- clean してから並列ビルド (通常はこれ)
+#   make -j$(nproc)  -- 並列ビルドのみ (cleanなし)
+#   make clean       -- ビルド成果物を削除
+#
+# "Nothing to be done" 問題について:
+#   .d依存追跡を廃止しているため、オブジェクトが残っていると
+#   makeがソース変更を検知できない。毎回 make rebuild で解決。
 #---------------------------------------------------------------------------------
 TARGET      := sdl2_red_square
 BUILD       := build
@@ -8,7 +17,8 @@ SOURCES     := main.cpp BmsonLoader.cpp SoundManager.cpp NoteRenderer.cpp \
                SceneSelect.cpp ScenePlay.cpp SceneResult.cpp PlayEngine.cpp ScoreManager.cpp \
                SceneTitle.cpp SceneDecision.cpp SceneSelectView.cpp SongManager.cpp \
                ChartProjector.cpp JudgeManager.cpp SceneOption.cpp SceneModeSelect.cpp \
-               SceneSideSelect.cpp VirtualFolderManager.cpp BgaManager.cpp BmsLoader.cpp
+               SceneSideSelect.cpp VirtualFolderManager.cpp BgaManager.cpp BmsLoader.cpp \
+               Scene2PDiffSelect.cpp
 
 # --- devkitProのパス設定 (自動取得) ---
 ifeq ($(strip $(DEVKITPRO)),)
@@ -32,7 +42,7 @@ NACP_AUTHOR := "User"
 NACP_VERSION:= "1.0.0"
 
 # --- コンパイルオプション ---
-CFLAGS  := -g -Wall -Os -ffunction-sections -fdata-sections -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE
+CFLAGS  := -Wall -Os -ffunction-sections -fdata-sections -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS  += -D__SWITCH__
 CFLAGS  += -I$(PORTLIBS)/include -I$(LIBNX)/include
 CFLAGS  += -I$(PORTLIBS)/include/SDL2
@@ -41,7 +51,7 @@ CFLAGS  += -I$(PORTLIBS)/include/SDL2_ttf
 CFLAGS  += -I.
 
 # --- リンクオプション ---
-LDFLAGS := -specs=$(LIBNX)/switch.specs -g -march=armv8-a -mtune=cortex-a57 -fPIE
+LDFLAGS := -specs=$(LIBNX)/switch.specs -march=armv8-a -mtune=cortex-a57 -fPIE
 LDFLAGS += -L$(PORTLIBS)/lib -L$(LIBNX)/lib
 LDFLAGS += -Wl,--start-group \
     -lavformat -lavcodec -lswscale -lswresample -lavutil \
@@ -52,46 +62,36 @@ LDFLAGS += -Wl,--start-group \
     -Wl,--end-group
 LDFLAGS += -lEGL -lglapi -ldrm_nouveau -lnx -lm -lpthread
 
-# --- 個別コンパイル用の設定 ---
-# .cpp → build/.o に変換
+# --- 並列数: 環境変数 JOBS で上書き可能、デフォルトは論理コア数 ---
+JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+
+# --- オブジェクトファイル ---
 OBJS := $(addprefix $(BUILD)/, $(SOURCES:.cpp=.o))
 
-# ヘッダの依存関係ファイル (.d) も build/ に生成
-# -MMD: システムヘッダを除いた依存関係を .d ファイルに書き出す
-# -MP:  ヘッダが削除された時にエラーにならないようにする
-DEPFLAGS = -MMD -MP
-DEPS := $(OBJS:.o=.d)
-
-.PHONY: all clean
+.PHONY: all rebuild clean
 
 all: $(OUTPUT).nro
 
+# --- rebuild: clean → 並列フルビルド (通常の使い方) ---
+rebuild:
+	$(MAKE) clean
+	$(MAKE) -j$(JOBS) all
+
 # --- リンク ---
 $(OUTPUT).elf: $(OBJS)
-	@echo "Linking..."
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # --- 個別コンパイル ---
-# build/foo.o: foo.cpp (+ 依存ヘッダは .d から自動追跡)
 $(BUILD)/%.o: %.cpp
 	@mkdir -p $(BUILD)
-	@echo "Compiling $<..."
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
-
-# --- 依存関係ファイルをインクルード ---
-# ヘッダを変更した時に関連する .o だけ再ビルドされる
--include $(DEPS)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # --- NACP / NRO ---
 $(NACP):
-	@echo "Creating NACP..."
 	$(NACPTOOL) --create $(NACP_TITLE) $(NACP_AUTHOR) $(NACP_VERSION) $@
 
 $(OUTPUT).nro: $(OUTPUT).elf $(NACP)
-	@echo "Creating NRO..."
 	$(ELF2NRO) $< $@ --icon=$(ICON) --nacp=$(NACP)
-	@echo "Success! Output is in: $(OUTPUT).nro"
 
 clean:
-	@echo "Cleaning..."
 	@rm -rf $(BUILD)

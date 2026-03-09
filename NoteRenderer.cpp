@@ -45,6 +45,34 @@ void NoteRenderer::rebuildLaneLayout() {
     }
 }
 
+// ★2P VS: 両サイドのレイアウトを事前計算
+void NoteRenderer::rebuildBothLayouts() {
+    int savedSide = Config::PLAY_SIDE;
+    
+    Config::PLAY_SIDE = 1;
+    rebuildLaneLayout();
+    ll1P = ll;
+    
+    Config::PLAY_SIDE = 2;
+    rebuildLaneLayout();
+    ll2P = ll;
+    
+    Config::PLAY_SIDE = savedSide;
+    ll = (savedSide == 1) ? ll1P : ll2P;
+    dualLayoutReady = true;
+}
+
+// ★2P VS: 描画中にサイドを切り替え（rebuildBothLayouts()呼び出し後のみ高速パス）
+void NoteRenderer::switchSide(int side) {
+    if (dualLayoutReady) {
+        ll = (side == 1) ? ll1P : ll2P;
+        Config::PLAY_SIDE = side;
+    } else {
+        Config::PLAY_SIDE = side;
+        rebuildLaneLayout();
+    }
+}
+
 // ============================================================
 //  NoteRenderer 実装
 // ============================================================
@@ -859,6 +887,7 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
 
 
 

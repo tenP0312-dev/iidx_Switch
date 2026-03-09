@@ -315,7 +315,10 @@ void PlayEngine::init(BMSData& data) {
                 pn.lane = 8;
             } else {
                 if (Config::PLAY_OPTION == 3) { // S-RANDOM
-                    std::vector<int> candidates = {1, 2, 3, 4, 5, 6, 7};
+                    // 【指摘(3-3)修正】std::vector → std::array
+                    // 旧: std::vector の初期化リスト構築は毎回 malloc を呼ぶ。
+                    // 新: std::array はスタック上 28 バイト、ヒープアロケーションゼロ。
+                    std::array<int, 7> candidates = {1, 2, 3, 4, 5, 6, 7};
                     std::shuffle(candidates.begin(), candidates.end(), g);
                     int selected = candidates[0];
                     uint8_t& mask = usedLanesMask[tn.y]; // operator[] は初回ゼロ初期化
@@ -465,7 +468,7 @@ void PlayEngine::update(double cur_ms, uint32_t now) {
         }
 
         if (n.isBGM && n.target_ms <= cur_ms) {
-            snd.play(n.soundId);
+            if (!skipBGM) snd.play(n.soundId);  // ★2P VS: 2P側はBGMスキップ
             n.played = true;
             if (i == nextUpdateIndex) nextUpdateIndex++;
         }
@@ -732,6 +735,9 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+
+
 
 
 
