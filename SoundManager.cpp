@@ -254,10 +254,45 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
     }
 
     // 外部ファイル読み込み
-    std::string path = rootPath + (rootPath.empty() || rootPath.back() == '/' ? "" : "/") + filename;
-    SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb");
+    // 候補パスを順に試す:
+    // ① rootPath + 元のファイル名
+    // ② rootPath + 同ステム + 別音声拡張子（SDL_mixerが対応するもの）
+    static const std::vector<std::string> AUDIO_EXTS = {
+        ".wav", ".WAV", ".ogg", ".OGG", ".mp3", ".MP3",
+        ".flac", ".FLAC", ".opus", ".OPUS"
+    };
+
+    // ステム取り出しヘルパー
+    auto getStem = [](const std::string& fname) -> std::string {
+        size_t dot = fname.find_last_of('.');
+        return (dot != std::string::npos) ? fname.substr(0, dot) : fname;
+    };
+
+    std::string dir = rootPath.empty() ? "" : (rootPath.back() == '/' ? rootPath : rootPath + "/");
+    std::string stem = getStem(filename);
+
+    // 候補リスト構築
+    std::vector<std::string> candidates;
+    candidates.push_back(dir + filename);           // ① 元のファイル名
+    for (const auto& ext : AUDIO_EXTS) {
+        std::string alt = dir + stem + ext;
+        if (alt != dir + filename) candidates.push_back(alt);  // ② 別拡張子
+    }
+
+    SDL_RWops* rw = nullptr;
+    std::string resolvedPath;
+    for (const auto& cand : candidates) {
+        rw = SDL_RWFromFile(cand.c_str(), "rb");
+        if (rw) {
+            resolvedPath = cand;
+            if (cand != dir + filename)
+                LOG_INFO("SoundManager", "loadSingleSound: resolved '%s' -> '%s'",
+                         filename.c_str(), cand.c_str());
+            break;
+        }
+    }
     if (!rw) {
-        LOG_WARN("SoundManager", "external file not found: '%s'", path.c_str());
+        LOG_WARN("SoundManager", "external file not found: '%s'", (dir + filename).c_str());
         return;
     }
 
@@ -271,20 +306,17 @@ void SoundManager::loadSingleSound(const std::string& filename, const std::strin
         return;
     }
 
-    // 外部ファイルは Mix_LoadWAV_RW(freesrc=1) で問題なし。
-    // SDL_RWFromFile で開いた RWops は SDL が内部でファイルハンドルを持つため、
-    // freesrc=1 で正しく閉じられる。
     Mix_Chunk* chunk = Mix_LoadWAV_RW(rw, 1);
     if (chunk) {
         sounds[id] = chunk;
         currentTotalMemory += fileSize;
         LOG_INFO("SoundManager", "loaded (external): '%s' size=%llu mem=%lluMB",
-                 filename.c_str(),
+                 resolvedPath.c_str(),
                  (unsigned long long)fileSize,
                  (unsigned long long)(currentTotalMemory / 1024 / 1024));
     } else {
         LOG_ERROR("SoundManager", "Mix_LoadWAV_RW failed (external): '%s' err=%s",
-                  filename.c_str(), Mix_GetError());
+                  resolvedPath.c_str(), Mix_GetError());
     }
 }
 
@@ -488,6 +520,7 @@ void SoundManager::cleanup() {
     clear();
     Mix_CloseAudio();
 }
+
 
 
 

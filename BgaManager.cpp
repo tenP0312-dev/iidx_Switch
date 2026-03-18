@@ -63,22 +63,78 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
 
     if (isVideoMode) clear();
 
-    // --- フォーマットを開く (フォールバックパス付き) ---
-    int err = avformat_open_input(&pFormatCtx, targetPath.c_str(), NULL, NULL);
-    if (err != 0) {
-        size_t lastSlash = targetPath.find_last_of("/\\");
-        std::string filename = (lastSlash != std::string::npos)
-            ? targetPath.substr(lastSlash + 1) : targetPath;
-        std::string fallback = Config::ROOT_PATH + "videos/" + filename;
-        if (fallback.compare(0, 5, "sdmc:") == 0) fallback.erase(0, 5);
-        err = avformat_open_input(&pFormatCtx, fallback.c_str(), NULL, NULL);
+    // --- 動画ファイル候補を順に試す ---
+    // 対応動画拡張子リスト
+    static const std::vector<std::string> VIDEO_EXTS = {
+        ".mp4", ".MP4", ".wmv", ".WMV", ".avi", ".AVI",
+        ".mov", ".MOV", ".m4v", ".M4V", ".mpg", ".MPG", ".mpeg", ".MPEG"
+    };
+
+    // ステム取り出し（拡張子を除いたファイル名部分）
+    auto getStem = [](const std::string& p) -> std::string {
+        size_t slash = p.find_last_of("/\\");
+        std::string fname = (slash != std::string::npos) ? p.substr(slash + 1) : p;
+        size_t dot = fname.find_last_of('.');
+        return (dot != std::string::npos) ? fname.substr(0, dot) : fname;
+    };
+
+    // ディレクトリ部分取り出し（末尾スラッシュ含む）
+    auto getDir = [](const std::string& p) -> std::string {
+        size_t slash = p.find_last_of("/\\");
+        return (slash != std::string::npos) ? p.substr(0, slash + 1) : "";
+    };
+
+    // ファイル名部分取り出し
+    auto getFilename = [](const std::string& p) -> std::string {
+        size_t slash = p.find_last_of("/\\");
+        return (slash != std::string::npos) ? p.substr(slash + 1) : p;
+    };
+
+    // 候補リストを構築
+    // ① 元のパスそのまま
+    // ② 同ディレクトリ + 同ステム + 別拡張子
+    // ③ videos/ + 元のファイル名
+    // ④ videos/ + 同ステム + 別拡張子
+    std::vector<std::string> candidates;
+    candidates.push_back(targetPath);
+
+    std::string dir      = getDir(targetPath);
+    std::string stem     = getStem(targetPath);
+    std::string filename = getFilename(targetPath);
+    std::string videosDir = Config::ROOT_PATH + "videos/";
+
+    // ② 同ディレクトリ + 同ステム + 別拡張子
+    for (const auto& ext : VIDEO_EXTS) {
+        std::string candidate = dir + stem + ext;
+        if (candidate != targetPath) candidates.push_back(candidate);
+    }
+    // ③ videos/ + 元のファイル名
+    candidates.push_back(videosDir + filename);
+    // ④ videos/ + 同ステム + 別拡張子
+    for (const auto& ext : VIDEO_EXTS) {
+        candidates.push_back(videosDir + stem + ext);
+    }
+
+    // 候補を順に試す
+    int err = -1;
+    std::string resolvedPath;
+    for (const auto& cand : candidates) {
+        std::string p = cand;
+        if (p.compare(0, 5, "sdmc:") == 0) p.erase(0, 5);
+        err = avformat_open_input(&pFormatCtx, p.c_str(), NULL, NULL);
+        if (err == 0) {
+            resolvedPath = p;
+            if (p != targetPath)
+                LOG_INFO("BgaManager", "loadBgaFile: resolved to '%s'", p.c_str());
+            break;
+        }
     }
     if (err != 0) {
         LOG_WARN("BgaManager", "loadBgaFile: could not open video '%s'", path.c_str());
         return false;
     }
     if (avformat_find_stream_info(pFormatCtx, NULL) < 0) {
-        LOG_WARN("BgaManager", "loadBgaFile: find_stream_info failed '%s'", path.c_str());
+        LOG_WARN("BgaManager", "loadBgaFile: find_stream_info failed '%s'", resolvedPath.c_str());
         avformat_close_input(&pFormatCtx); pFormatCtx = nullptr;
         return false;
     }
@@ -271,6 +327,20 @@ void BgaManager::videoWorker() {
             int64_t startTime = pFormatCtx->streams[videoStreamIdx]->start_time;
             if (startTime != AV_NOPTS_VALUE) pts -= startTime;
             double frameTime = pts * av_q2d(pFormatCtx->streams[videoStreamIdx]->time_base);
+
+            // --- 先読み制限: syncTime で指定された再生位置より大幅に先行しない ---
+            // sharedVideoElapsed が 0 の間（待機中）にフレームを溜め込みすぎると
+            // 再生開始時にタイミングがずれるため、最大1フレーム分だけ先読みを許容する。
+            {
+                const double maxLookAhead = (videoFps > 0.0) ? (1.0 / videoFps) * 2.0 : 0.1;
+                double currentElapsed = sharedVideoElapsed.load(std::memory_order_acquire);
+                while (!quitThread.load(std::memory_order_relaxed) &&
+                       frameTime > currentElapsed + maxLookAhead) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(halfFrameMs));
+                    currentElapsed = sharedVideoElapsed.load(std::memory_order_acquire);
+                }
+                if (quitThread.load(std::memory_order_relaxed)) break;
+            }
 
             // --- NV12 変換 → slots[tail].data に直接書き込む ---
             FrameSlot& slot = slots[tail];
@@ -503,6 +573,8 @@ void BgaManager::clear() {
 }
 
 void BgaManager::cleanup() { clear(); }
+
+
 
 
 

@@ -42,13 +42,13 @@ static int getLane2P(int btn) {
 }
 
 bool ScenePlay::isAutoLane(int lane) {
-    if (Config::ASSIST_OPTION == 7) return true;
+    if (Config::ASSIST_OPTION == 7) return true; // AUTO PLAY: 全レーンオート
     bool autoScr = (Config::ASSIST_OPTION == 1 || Config::ASSIST_OPTION == 4 || 
                     Config::ASSIST_OPTION == 5 || Config::ASSIST_OPTION == 6);
     bool auto5k = (Config::ASSIST_OPTION == 3 || Config::ASSIST_OPTION == 5 || 
                     Config::ASSIST_OPTION == 6);
-    // EX: SCR ONLY = 7鍵盤をすべてオートにしてスクラッチのみプレイ
-    if (Config::EX_OPTION == 2 && lane != 8) return true;
+    // ASSIST: SCR ONLY (8) = 7鍵盤をすべてオートにしてスクラッチのみプレイ
+    if (Config::ASSIST_OPTION == 8 && lane != 8) return true;
     if (lane == 8 && autoScr) return true;
     if ((lane == 6 || lane == 7) && auto5k) return true;
     return false;
@@ -62,7 +62,7 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine) {
         const auto& n = notes[i];
         if (n.played || n.isBGM) continue;
         if (n.target_ms > cur_ms + 100) break; // 早期終了
-        
+
         if (isAutoLane(n.lane)) {
             if (!n.isBeingPressed && cur_ms >= n.target_ms) {
                 // ★修正: 完全オート(ASSIST_OPTION==7)はスコア・コンボ加算あり。
@@ -84,16 +84,16 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine) {
                     bombAnimsBuf[bombCount++] = {n.lane, now, 2};
 
                 // ★修正: オートLNの持続ボム用に判定結果を保存。
-                //        旧実装は lnHitJudge を processInput() 内でしかセットしなかったため
-                //        オートレーンでは常に 0 のまま → LN持続ボムが出なかった。
                 if (n.isLN) {
                     lnHitJudge[n.lane]     = resultJudge;
                     lastLNBombTime[n.lane] = now;
                 }
             }
-            if (n.isLN && n.isBeingPressed && cur_ms >= n.target_ms + n.duration_ms) {
+            // ★LNモード: update()でP-GREAT確定済みなのでここには来ないはずだが、
+            //   CN/HCNモードは従来通り終端msでprocessReleaseを呼ぶ。
+            if (n.isLN && n.isBeingPressed && Config::LN_OPTION != 2
+                && cur_ms >= n.target_ms + n.duration_ms) {
                 engine.processRelease(n.lane, n.target_ms + n.duration_ms, now);
-                // ★修正: LNリリース時にリセット（手動入力と同じ処理）
                 lnHitJudge[n.lane]     = 0;
                 lastLNBombTime[n.lane] = 0;
             }
@@ -101,7 +101,6 @@ void ScenePlay::updateAssist(double cur_ms, PlayEngine& engine) {
     }
 }
 
-// --- メインロジック ---
 bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath) {
     LOG_INFO("ScenePlay", "=== run() start: '%s' ===", bmsonPath.c_str());
     numPlayers = 1; // ★修正: runVS()後も正しく1Pモードに戻るようにリセット
@@ -371,7 +370,7 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 
         double cur_ms = (double)((int64_t)now - (int64_t)start_ticks);
 
-        bga.syncTime(cur_ms - videoOffsetMs);
+        bga.syncTime(std::max(0.0, cur_ms - videoOffsetMs));
 
         if (!processInput(cur_ms, now, engine)) {
             if (engine.getStatus().isFailed) playing = false;
@@ -509,6 +508,7 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 static int keyToJoyButton(SDL_Keycode key) {
     // プレイキー: z=lane1, s=lane2, x=lane3, d=lane4, c=lane5, f=lane6, v=lane7
     // g=scratch_up, b=scratch_down, a=start, e=effect
+    // Enter=decide（待機ループ解除）
     switch (key) {
         case SDLK_z: return Config::BTN_LANE1;
         case SDLK_s: return Config::BTN_LANE2;
@@ -521,6 +521,8 @@ static int keyToJoyButton(SDL_Keycode key) {
         case SDLK_b: return Config::BTN_LANE8_B;   // scratch down
         case SDLK_a: return Config::BTN_EXIT;       // start
         case SDLK_e: return Config::BTN_EFFECT;     // effect
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER: return Config::SYS_BTN_DECIDE; // 曲開始
         default:     return -1;
     }
 }
@@ -623,7 +625,9 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, PlayEngine& engine) {
                 } else {
                     if (!engine.getStatus().isFailed && cur_ms >= -500.0) {
                         engine.processRelease(lane, hit_ms, now);
-                        lnHitJudge[lane] = 0;  // 離したらクリア
+                        // ★HCNモード: 離しても lnHitJudge を維持（ティック中ボム演出継続）
+                        // CN/LNは従来通りクリア
+                        if (Config::LN_OPTION != 1) lnHitJudge[lane] = 0;
                     }
                 }
             }
@@ -647,9 +651,8 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
                        const BMSHeader& header, uint32_t baseNow, int durationMs) {
     SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
 
-    // ── スナップショットをオフスクリーンテクスチャに1回だけ描画 ──
-    // 毎フレーム renderScene を呼ぶと描画内容のブレでちらつきが生じるため、
-    // フェード開始時点の画面を固定してその上から黒矩形をフェードさせる。
+#ifdef __SWITCH__
+    // Switch: スナップショットテクスチャを使ったフェードイン（従来通り）
     SDL_Texture* snap = SDL_CreateTexture(ren,
         SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
         Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT);
@@ -658,25 +661,17 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
         renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
         SDL_SetRenderTarget(ren, nullptr);
     } else {
-        // SDL_TEXTUREACCESS_TARGET は VRAM 依存。失敗時は毎フレーム描画にフォールバックするが
-        // VRAM 残量不足のサインとして記録しておく。
-        LOG_WARN("ScenePlay", "fadeIn: SDL_CreateTexture(TARGET) failed, fallback to per-frame render: %s",
-                 SDL_GetError());
+        LOG_WARN("ScenePlay", "fadeIn: SDL_CreateTexture(TARGET) failed: %s", SDL_GetError());
     }
-
     uint32_t start = SDL_GetTicks();
     while (true) {
         uint32_t frameStart = SDL_GetTicks();
         float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
-
         if (snap) {
             SDL_RenderCopy(ren, snap, nullptr, nullptr);
         } else {
-            // スナップショット作成失敗時は従来通り毎フレーム描画
             renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
         }
-
-        // 黒矩形を (1-t) の不透明度で重ねる（黒→透明へ遷移 = フェードイン）
         Uint8 alpha = (Uint8)((1.0f - t) * 255);
         if (alpha > 0) {
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
@@ -686,17 +681,37 @@ void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& en
         }
         SDL_RenderPresent(ren);
         SDL_Event e; while (SDL_PollEvent(&e)) {}
-#ifdef __SWITCH__
         if (!appletMainLoop()) break;
-#endif
         if (t >= 1.0f) break;
-        // VSync が効いていない場合でも約16ms/frame を下限として保証（CPU 100% 防止）
         uint32_t elapsed = SDL_GetTicks() - frameStart;
         if (elapsed < 16) SDL_Delay(16 - elapsed);
     }
-
     if (snap) SDL_DestroyTexture(snap);
+#else
+    // macOS/PC: SDL_TEXTUREACCESS_TARGET はデコードスレッド実行中に
+    // Metal コンテキスト競合を起こすため使用しない。
+    // 毎フレーム renderScene を呼ぶシンプルなフェードイン。
+    uint32_t start = SDL_GetTicks();
+    while (true) {
+        uint32_t frameStart = SDL_GetTicks();
+        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
+        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
+        Uint8 alpha = (Uint8)((1.0f - t) * 255);
+        if (alpha > 0) {
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(ren, 0, 0, 0, alpha);
+            SDL_RenderFillRect(ren, &screen);
+            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+        }
+        SDL_RenderPresent(ren);
+        SDL_Event e; while (SDL_PollEvent(&e)) {}
+        if (t >= 1.0f) break;
+        uint32_t elapsed = SDL_GetTicks() - frameStart;
+        if (elapsed < 16) SDL_Delay(16 - elapsed);
+    }
+#endif
 }
+
 
 void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
                         BgaManager& bga, double cur_ms, int64_t cur_y,
@@ -916,7 +931,8 @@ void ScenePlay::handlePlayerButton(int playerIdx, int lane, bool isDown,
         } else {
             if (!engine.getStatus().isFailed && hit_ms >= -500.0) {
                 engine.processRelease(lane, hit_ms, now);
-                ps.lnHitJudge[lane] = 0;
+                // ★HCNモード: 離しても lnHitJudge を維持（ティック中ボム演出継続）
+                if (Config::LN_OPTION != 1) ps.lnHitJudge[lane] = 0;
             }
         }
     }
@@ -1094,7 +1110,10 @@ void ScenePlay::updateAssistForPlayer(double cur_ms, PlayEngine& engine, PlayerS
                     ps.lastLNBombTime[n.lane] = now;
                 }
             }
-            if (n.isLN && n.isBeingPressed && cur_ms >= n.target_ms + n.duration_ms) {
+            // ★LNモード: update()でP-GREAT確定済みなのでここには来ないはずだが、
+            //   CN/HCNモードは従来通り終端msでprocessReleaseを呼ぶ。
+            if (n.isLN && n.isBeingPressed && Config::LN_OPTION != 2
+                && cur_ms >= n.target_ms + n.duration_ms) {
                 engine.processRelease(n.lane, n.target_ms + n.duration_ms, now);
                 ps.lnHitJudge[n.lane]     = 0;
                 ps.lastLNBombTime[n.lane] = 0;
@@ -1102,6 +1121,7 @@ void ScenePlay::updateAssistForPlayer(double cur_ms, PlayEngine& engine, PlayerS
         }
     }
 }
+
 
 void ScenePlay::renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
                                    PlayEngine& engine, PlayerState& ps,
@@ -1349,7 +1369,7 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
     while (playing) {
         uint32_t now = SDL_GetTicks();
         double cur_ms = (double)((int64_t)now - (int64_t)start_ticks);
-        bga.syncTime(cur_ms - videoOffsetMs);
+        bga.syncTime(std::max(0.0, cur_ms - videoOffsetMs));
 
         if (!processInputVS(cur_ms, now, engine1P, engine2P, joy1ID, joy2ID)) {
             isAborted = true; playing = false; break;

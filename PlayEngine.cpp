@@ -87,9 +87,33 @@ void PlayEngine::init(BMSData& data) {
     for (const auto& ch : data.sound_channels) {
         uint32_t sId = fnv1a32_sound(ch.name);
         for (const auto& n : ch.notes) {
+            // 不可視オブジェ: x が負値（BmsLoaderが -lane として格納）
+            if (n.x < 0) {
+                int lane = (int)(-n.x);
+                if (lane >= 1 && lane <= 8) {
+                    PlayableNote pn;
+                    pn.y           = n.y;
+                    pn.target_ms   = projector.getMsFromY(n.y);
+                    pn.lane        = lane;
+                    pn.soundId     = sId;
+                    pn.isInvisible = true;
+                    pn.isBGM       = false;
+                    laneHiddenNotes[lane].push_back(pn);
+                }
+                continue;
+            }
             bool isBGM = (n.x < 1 || n.x > 8);
             tempNotes.push_back({n.y, n.l, (int)n.x, sId, isBGM});
         }
+    }
+
+    // laneHiddenNotes を target_ms 昇順にソート
+    for (int lane = 1; lane <= 8; ++lane) {
+        std::sort(laneHiddenNotes[lane].begin(), laneHiddenNotes[lane].end(),
+                  [](const PlayableNote& a, const PlayableNote& b) {
+                      return a.target_ms < b.target_ms;
+                  });
+        hiddenSearchStart[lane] = 0;
     }
 
     std::sort(tempNotes.begin(), tempNotes.end(), [](const TempNote& a, const TempNote& b) {
@@ -103,7 +127,7 @@ void PlayEngine::init(BMSData& data) {
     // 縦連回避: 既存ノーツとのy距離をlower_boundで正確に計算。3パスで制約を段階的に緩和。
     // LN占有区間回避: 既存プレイLN押下中のレーンを避ける。
     // この処理はランダムオプション適用前に行い、後でS-RANDOM等が適用される。
-    if (Config::EX_OPTION == 3 && Config::MORE_NOTES_COUNT > 0) {
+    if (Config::EX_OPTION == 2 && Config::MORE_NOTES_COUNT > 0) {
         // 1. BGM単発ノーツを収集
         std::vector<size_t> bgmCandidates;
         bgmCandidates.reserve(512);
@@ -431,6 +455,8 @@ void PlayEngine::init(BMSData& data) {
     for (int lane = 1; lane <= 8; ++lane) {
         laneNoteIndices[lane].clear();
         laneSearchStart[lane] = 0;
+        laneHiddenNotes[lane].clear();
+        hiddenSearchStart[lane] = 0;
         for (size_t i = 0; i < notes.size(); ++i) {
             if (!notes[i].isBGM && notes[i].lane == lane) {
                 laneNoteIndices[lane].push_back(i);
@@ -468,7 +494,7 @@ void PlayEngine::update(double cur_ms, uint32_t now) {
         }
 
         if (n.isBGM && n.target_ms <= cur_ms) {
-            if (!skipBGM) snd.play(n.soundId);  // ★2P VS: 2P側はBGMスキップ
+            if (!skipBGM) snd.play(n.soundId);
             n.played = true;
             if (i == nextUpdateIndex) nextUpdateIndex++;
         }
@@ -476,14 +502,87 @@ void PlayEngine::update(double cur_ms, uint32_t now) {
             double adjusted_target = n.target_ms + Config::JUDGE_OFFSET;
             double end_ms = adjusted_target + (n.isLN ? n.duration_ms : 0);
 
-            if (cur_ms > end_ms + Config::JUDGE_POOR) {
-                n.played        = true;
+            // ★HCNモード: ティック処理（押中→ゲージ回復、離中→POOR）
+            // ティック間隔 = 16分音符1個分 = 60000 / (BPM × 4) ms
+            if (Config::LN_OPTION == 1 && n.isLN && n.hcnLastTickMs >= 0.0
+                && !n.played
+                && cur_ms < end_ms + Config::JUDGE_POOR) {
+                double bpm = projector.getBpmFromMs(cur_ms);
+                double tickInterval = (bpm > 0.0) ? (60000.0 / (bpm * 4.0)) : 125.0;
+
+                // ★ケースB対策: 離し中かつ次ティック前にPGREAT窓に入ったらPOOR1回出して強制終了
+                if (!n.isBeingPressed && cur_ms >= end_ms - Config::JUDGE_PGREAT) {
+                    n.played        = true;
+                    n.hcnLastTickMs = -1.0;
+                    status.remainingNotes--;
+                    status.poorCount++;
+                    status.combo = 0;
+                    currentJudge.kind      = JudgeKind::POOR;
+                    currentJudge.startTime = now;
+                    currentJudge.active    = true;
+                    currentJudge.isFast    = false;
+                    currentJudge.isSlow    = false;
+                    judgeManager.updateGauge(status, 0, false, baseRecoveryPerNote);
+                    if (i == nextUpdateIndex) nextUpdateIndex++;
+                    if (status.isFailed) { snd.stopAll(); break; }
+                    continue;
+                }
+
+                if (cur_ms - n.hcnLastTickMs >= tickInterval) {
+                    n.hcnLastTickMs = cur_ms; // 常にcur_msにリセット（溜まったティックの連鎖を防ぐ）
+                    if (n.isBeingPressed) {
+                        // 押中: ゲージ回復のみ（スコア・コンボ・判定表示なし）
+                        judgeManager.updateGauge(status, 3, true, baseRecoveryPerNote);
+                    } else {
+                        // 離中: POOR・コンボ切れ・ゲージ削れ（1フレーム1POOR上限）
+                        status.poorCount++;
+                        status.combo = 0;
+                        currentJudge.kind      = JudgeKind::POOR;
+                        currentJudge.startTime = now;
+                        currentJudge.active    = true;
+                        currentJudge.isFast    = false;
+                        currentJudge.isSlow    = false;
+                        judgeManager.updateGauge(status, 0, false, baseRecoveryPerNote);
+                        if (status.isFailed) { snd.stopAll(); break; }
+                    }
+                }
+            }
+
+            // ★LNモード: 押下中LNがPGREAT窓に入った瞬間にP-GREAT確定。
+            // played=true になるのでprocessReleaseには来ない（空押し状態）。
+            if (Config::LN_OPTION == 2
+                && n.isLN && n.isBeingPressed
+                && cur_ms >= end_ms - Config::JUDGE_PGREAT) {
                 n.isBeingPressed = false;
+                n.played         = true;
+                status.remainingNotes--;
+                status.pGreatCount++;
+                status.combo++;
+                status.exScore += 2;
+
+                currentJudge.kind      = JudgeKind::PGREAT;
+                currentJudge.startTime = now;
+                currentJudge.active    = true;
+                currentJudge.isFast    = false;
+                currentJudge.isSlow    = false;
+                currentJudge.diffMs    = 0.0;
+
+                if (status.combo > status.maxCombo) status.maxCombo = status.combo;
+                judgeManager.updateGauge(status, 3, true, baseRecoveryPerNote);
+
+                if (i == nextUpdateIndex) nextUpdateIndex++;
+                continue;
+            }
+
+            // 通常のPOOR処理（JUDGE_POOR窓を超えたノーツ）
+            if (cur_ms > end_ms + Config::JUDGE_POOR) {
+                n.played         = true;
+                n.isBeingPressed = false;
+                n.hcnLastTickMs  = -1.0;
                 status.remainingNotes--;
                 status.poorCount++;
                 status.combo = 0;
 
-                // ★修正：string 代入なし。enum を直接セット
                 currentJudge.kind      = JudgeKind::POOR;
                 currentJudge.startTime = now;
                 currentJudge.active    = true;
@@ -505,7 +604,10 @@ void PlayEngine::update(double cur_ms, uint32_t now) {
     if (cur_ms > status.maxTargetMs + 1000.0) {
         if (!status.isFailed) {
             int opt = Config::GAUGE_OPTION;
-            if (opt >= 3) {
+            if (Config::ASSIST_OPTION > 0) {
+                status.clearType = ClearType::ASSIST_CLEAR;
+            }
+            else if (opt >= 3) {
                 if (status.badCount == 0 && status.poorCount == 0) status.clearType = ClearType::FULL_COMBO;
                 else if (opt == 3) status.clearType = ClearType::HARD_CLEAR;
                 else if (opt == 4) status.clearType = ClearType::EX_HARD_CLEAR;
@@ -535,11 +637,9 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
     bool hitSuccess = false;
     int  finalJudge = 0;
 
-    // ★修正②: レーン別インデックスで O(1) アクセス。全ノーツの O(N) スキャンを廃止。
     const auto& indices = laneNoteIndices[lane];
     size_t& startIdx    = laneSearchStart[lane];
 
-    // played かつ LN を保持していないノーツは開始位置を前進させる
     while (startIdx < indices.size()
            && notes[indices[startIdx]].played
            && !notes[indices[startIdx]].isBeingPressed) {
@@ -551,22 +651,78 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
         if (n.played && !n.isBeingPressed) { startIdx = k + 1; continue; }
         if (n.isLN && n.isBeingPressed) continue;
 
+        // ★HCNモード: played==false かつ LN かつ未押下 → 判定窓外でも押下開始
+        // 途中からいつでも押せる。終端POOR窓内ならティック開始。
+        if (Config::LN_OPTION == 1 && n.isLN && !n.played && !n.isBeingPressed) {
+            double adjusted_end = (n.target_ms + n.duration_ms) + Config::JUDGE_OFFSET;
+            if (cur_ms <= adjusted_end + Config::JUDGE_POOR
+                && cur_ms >= n.target_ms - Config::JUDGE_BAD) {
+                n.isBeingPressed = true;
+                n.hcnLastTickMs  = cur_ms;
+                snd.play(n.soundId);
+                lastSoundPerLaneId[lane] = n.soundId;
+                // 頭ノートの判定窓内なら頭ノート判定も行う
+                double adjusted_target = n.target_ms + Config::JUDGE_OFFSET;
+                double raw_diff = cur_ms - adjusted_target;
+                double diff     = std::abs(raw_diff);
+                int hcnJudgeResult = 3; // 頭判定なし（途中押し）はPGREAT相当でボム演出
+                if (diff <= Config::JUDGE_BAD && !isAuto) {
+                    int judgeType = 0;
+                    bool isFast = (raw_diff < 0), isSlow = (raw_diff > 0);
+                    if      (diff <= Config::JUDGE_PGREAT) { judgeType = 3; isFast = isSlow = false; status.pGreatCount++; status.combo++; status.exScore += 2; }
+                    else if (diff <= Config::JUDGE_GREAT)  { judgeType = 2; status.greatCount++; status.combo++; status.exScore += 1; if (isFast) status.fastCount++; else status.slowCount++; }
+                    else if (diff <= Config::JUDGE_GOOD)   { judgeType = 1; status.goodCount++; status.combo++; if (isFast) status.fastCount++; else status.slowCount++; }
+                    else                                   { judgeType = 0; status.badCount++; status.combo = 0; isFast = isSlow = false; }
+                    auto uiData = judgeManager.getJudgeUIData(judgeType);
+                    currentJudge.kind      = uiData.kind;
+                    currentJudge.startTime = now;
+                    currentJudge.active    = true;
+                    currentJudge.isFast    = isFast;
+                    currentJudge.isSlow    = isSlow;
+                    currentJudge.diffMs    = raw_diff;
+                    if (status.combo > status.maxCombo) status.maxCombo = status.combo;
+                    judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
+                    hcnJudgeResult = judgeType;
+                }
+                return hcnJudgeResult;
+            }
+            continue;
+        }
+
         double adjusted_target = n.target_ms + Config::JUDGE_OFFSET;
 
-        // このノーツより先はすべて未来 → 早期終了
         if (adjusted_target > cur_ms + Config::JUDGE_BAD) break;
 
         double raw_diff = cur_ms - adjusted_target;
         double diff     = std::abs(raw_diff);
 
-        // 判定窓より古いノーツはスキップ（update() で POOR 処理済みのはずだが念のため）
         if (diff > Config::JUDGE_BAD) continue;
 
         snd.play(n.soundId);
         lastSoundPerLaneId[lane] = n.soundId;
 
+        {
+            auto& hidden = laneHiddenNotes[lane];
+            size_t& hStart = hiddenSearchStart[lane];
+            while (hStart < hidden.size() && hidden[hStart].played) hStart++;
+            if (hStart < hidden.size()) {
+                PlayableNote& hn = hidden[hStart];
+                double hDiff = std::abs(cur_ms - hn.target_ms);
+                if (hDiff <= Config::JUDGE_BAD) {
+                    snd.play(hn.soundId);
+                    lastSoundPerLaneId[lane] = hn.soundId;
+                    hn.played = true;
+                    hStart++;
+                }
+            }
+        }
+
         if (n.isLN) {
             n.isBeingPressed = true;
+            // ★HCNモード: 頭ノートヒット時にティック基準時刻をセット
+            if (Config::LN_OPTION == 1) {
+                n.hcnLastTickMs = cur_ms;
+            }
         } else {
             n.played = true;
             status.remainingNotes--;
@@ -582,27 +738,32 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
             judgeType = 3;
             isFast = false; isSlow = false;
             if (!isAuto) { status.pGreatCount++; status.combo++; status.exScore += 2; }
+            else if (Config::ASSIST_OPTION == 7) { status.combo++; }
         } else if (diff <= Config::JUDGE_GREAT) {
             judgeType = 2;
             if (!isAuto) {
                 status.greatCount++; status.combo++; status.exScore += 1;
                 if (isFast) status.fastCount++; else status.slowCount++;
             }
+            else if (Config::ASSIST_OPTION == 7) { status.combo++; }
         } else if (diff <= Config::JUDGE_GOOD) {
             judgeType = 1;
             if (!isAuto) {
                 status.goodCount++; status.combo++;
                 if (isFast) status.fastCount++; else status.slowCount++;
             }
+            else if (Config::ASSIST_OPTION == 7) { status.combo++; }
         } else {
             judgeType = 0;
             if (!isAuto) {
                 status.badCount++;
                 status.combo = 0;
             }
+            // AUTO PLAYでBADは発生しないため、else if不要
             if (n.isLN) {
                 n.isBeingPressed = false;
                 n.played         = true;
+                n.hcnLastTickMs  = -1.0;
                 status.remainingNotes--;
             }
             isFast = false; isSlow = false;
@@ -621,6 +782,9 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
             currentJudge.diffMs    = raw_diff;
             if (status.combo > status.maxCombo) status.maxCombo = status.combo;
             judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
+        } else if (Config::ASSIST_OPTION == 7) {
+            // AUTO PLAY: コンボ加算済みのためmaxComboのみ更新
+            if (status.combo > status.maxCombo) status.maxCombo = status.combo;
         }
 
         if (status.isFailed) snd.stopAll();
@@ -630,7 +794,7 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
     if (!hitSuccess) {
         if (lane >= 1 && lane <= 8 && lastSoundPerLaneId[lane] != 0) {
             snd.play(lastSoundPerLaneId[lane]);
-            if (Config::GAUGE_OPTION == 6) { // HAZARD
+            if (Config::GAUGE_OPTION == 6) {
                 status.gauge     = 0.0;
                 status.isFailed  = true;
                 status.isDead    = true;
@@ -645,15 +809,9 @@ int PlayEngine::processHit(int lane, double cur_ms, uint32_t now, bool isAuto) {
 void PlayEngine::processRelease(int lane, double cur_ms, uint32_t now) {
     if (status.isFailed || lane < 1 || lane > 8) return;
 
-    // ★修正: nextUpdateIndex からの O(N) 全スキャンを廃止。
-    //        processHit() と同じ laneNoteIndices ベースの O(M) 探索に統一する。
-    //        旧実装は processHit() だけ O(1) に改善して processRelease() が手つかずのままだった。
-    //        LN が多い譜面でボタンを離すたびに全ノーツを線形スキャンしていたため、
-    //        LN リリース時の入力遅延として顕在化していた。
     const auto& indices = laneNoteIndices[lane];
     size_t& startIdx    = laneSearchStart[lane];
 
-    // played かつ LN を保持していないノーツは開始位置を前進させる
     while (startIdx < indices.size()
            && notes[indices[startIdx]].played
            && !notes[indices[startIdx]].isBeingPressed) {
@@ -664,13 +822,98 @@ void PlayEngine::processRelease(int lane, double cur_ms, uint32_t now) {
         auto& n = notes[indices[k]];
         if (n.played && !n.isBeingPressed) { startIdx = k + 1; continue; }
 
-        // isBeingPressed の LN のみが対象
+        // isBeingPressed の LN のみが対象。
+        // LNモードでは update() でP-GREAT確定済みなので played=true になっており
+        // ここには来ない。空押しは自然に無視される。
         if (!n.isLN || !n.isBeingPressed) continue;
 
+        // ★HCNモード:
+        // 終端 ±PGREAT窓内で離す   → PGREAT + played=true
+        // 終端より早い離し          → isBeingPressed=falseのみ、ティック継続でPOOR
+        // 終端+PGREAT窓〜+BAD窓    → BAD  + played=true  (CNと同じ)
+        // 終端+BAD窓以降           → POOR + played=true  (CNと同じ)
+        if (Config::LN_OPTION == 1) {
+            double adjusted_end_hcn = (n.target_ms + n.duration_ms) + Config::JUDGE_OFFSET;
+            double raw_diff_hcn     = cur_ms - adjusted_end_hcn;
+
+            if (raw_diff_hcn >= -Config::JUDGE_PGREAT) {
+                // 終端PGREAT窓以降で離した → played=trueにしてティック停止
+                n.isBeingPressed = false;
+                n.played         = true;
+                n.hcnLastTickMs  = -1.0;
+                status.remainingNotes--;
+
+                double diff_hcn = std::abs(raw_diff_hcn);
+                int judgeType;
+                if (diff_hcn <= Config::JUDGE_PGREAT) {
+                    // ±PGREAT窓 → PGREAT
+                    status.pGreatCount++; status.combo++; judgeType = 3;
+                    status.exScore += 2;
+                    currentJudge.isFast = currentJudge.isSlow = false;
+                } else if (diff_hcn <= Config::JUDGE_GREAT) {
+                    // +PGREAT〜+GREAT → GREAT (遅離し)
+                    status.greatCount++; status.combo++; judgeType = 2;
+                    status.exScore += 1;
+                    currentJudge.isFast = false; currentJudge.isSlow = true;
+                } else if (diff_hcn <= Config::JUDGE_GOOD) {
+                    // +GREAT〜+GOOD → GOOD (遅離し)
+                    status.goodCount++; status.combo++; judgeType = 1;
+                    currentJudge.isFast = false; currentJudge.isSlow = true;
+                } else if (diff_hcn <= Config::JUDGE_BAD) {
+                    // +GOOD〜+BAD → BAD (遅離し)
+                    status.badCount++; status.combo = 0; judgeType = 0;
+                    currentJudge.isFast = false; currentJudge.isSlow = true;
+                } else {
+                    // +BAD以降 → POOR
+                    status.poorCount++; status.combo = 0; judgeType = -1;
+                    currentJudge.isFast = currentJudge.isSlow = false;
+                }
+
+                if (judgeType >= 0) {
+                    auto uiData = judgeManager.getJudgeUIData(judgeType);
+                    currentJudge.kind      = uiData.kind;
+                    currentJudge.startTime = now;
+                    currentJudge.active    = true;
+                    currentJudge.diffMs    = raw_diff_hcn;
+                    if (status.combo > status.maxCombo) status.maxCombo = status.combo;
+                    judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
+                } else {
+                    currentJudge.kind      = JudgeKind::POOR;
+                    currentJudge.startTime = now;
+                    currentJudge.active    = true;
+                    currentJudge.diffMs    = raw_diff_hcn;
+                    judgeManager.updateGauge(status, 0, false, baseRecoveryPerNote);
+                }
+            } else {
+                // 終端PGREAT窓より早い離し → isBeingPressed=falseのみ、ティック継続
+                n.isBeingPressed = false;
+            }
+            break;
+        }
+
         double adjusted_end = (n.target_ms + n.duration_ms) + Config::JUDGE_OFFSET;
-        double raw_diff     = cur_ms - adjusted_end;
+        double raw_diff     = cur_ms - adjusted_end;  // 正=遅い, 負=早い
         double diff         = std::abs(raw_diff);
 
+        // ★CN/LN共通: 終端より JUDGE_GOOD 以上早く離した → 強制POOR（ゲージ削れ）
+        if (raw_diff < -Config::JUDGE_GOOD) {
+            n.isBeingPressed = false;
+            n.played         = true;
+            status.remainingNotes--;
+            status.poorCount++;
+            status.combo = 0;
+
+            currentJudge.kind      = JudgeKind::POOR;
+            currentJudge.startTime = now;
+            currentJudge.active    = true;
+            currentJudge.isFast    = false;
+            currentJudge.isSlow    = false;
+
+            judgeManager.updateGauge(status, 0, false, baseRecoveryPerNote);
+            break;
+        }
+
+        // 判定窓内での離し: タイミング判定
         if (diff <= Config::JUDGE_BAD) {
             n.isBeingPressed = false;
             n.played         = true;
@@ -707,6 +950,7 @@ void PlayEngine::processRelease(int lane, double cur_ms, uint32_t now) {
             if (status.combo > status.maxCombo) status.maxCombo = status.combo;
             judgeManager.updateGauge(status, judgeType, true, baseRecoveryPerNote);
         } else {
+            // 判定窓外（遅すぎ離し）→ POOR
             n.isBeingPressed = false;
             n.played         = true;
             status.remainingNotes--;
@@ -735,28 +979,3 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

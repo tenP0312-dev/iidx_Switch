@@ -57,6 +57,7 @@ int main(int argc, char* argv[]) {
 #endif
 #endif
 
+    Config::initRootPath(argv[0]);  // 実行ファイルの場所を ROOT_PATH に設定
     Config::load();
     Logger::init(Config::ROOT_PATH + "log.txt");
     LOG_INFO("main", "=== App Start ===");
@@ -71,8 +72,20 @@ int main(int argc, char* argv[]) {
         joy = SDL_JoystickOpen(0);
     }
 
-    SDL_Window* win = SDL_CreateWindow("IIDX_TEST", 0, 0, 1280, 720, 0);
+    SDL_Window* win = SDL_CreateWindow("IIDX_TEST", 0, 0, 1280, 720, SDL_WINDOW_SHOWN);
+    SDL_ShowWindow(win);
+    SDL_RaiseWindow(win);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+
+    // macOS Metal: 最初の SDL_RenderPresent の前に drawable を確定させる
+    // ウォームアップとしてクリア+Presentを1回走らせる
+    if (ren) {
+        SDL_Event e; SDL_PumpEvents(); while (SDL_PollEvent(&e)) {}
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        SDL_RenderPresent(ren);
+        SDL_PumpEvents(); while (SDL_PollEvent(&e)) {}
+    }
 
     NoteRenderer renderer;
     SoundManager::getInstance().init(); 
@@ -111,6 +124,25 @@ int main(int argc, char* argv[]) {
                 SDL_Quit();
                 return 0;
             }
+
+            // Mac/PC: キーボード → SYS_BTNに変換
+            if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+                int btn = -1;
+                switch (e.key.keysym.sym) {
+                    case SDLK_UP:     btn = Config::SYS_BTN_UP;     break;
+                    case SDLK_DOWN:   btn = Config::SYS_BTN_DOWN;   break;
+                    case SDLK_LEFT:   btn = Config::SYS_BTN_LEFT;   break;
+                    case SDLK_RIGHT:  btn = Config::SYS_BTN_RIGHT;  break;
+                    case SDLK_RETURN: btn = Config::SYS_BTN_DECIDE; break;
+                    case SDLK_ESCAPE: btn = Config::SYS_BTN_BACK;   break;
+                    default: break;
+                }
+                if (btn >= 0) {
+                    e.type = SDL_JOYBUTTONDOWN;
+                    e.jbutton.button = (Uint8)btn;
+                }
+            }
+
             if (e.type == SDL_JOYBUTTONDOWN) {
                 int btn = e.jbutton.button;
 
@@ -119,7 +151,7 @@ int main(int argc, char* argv[]) {
                     scanSelectedOption = 1 - scanSelectedOption;
                 }
                 
-                if (btn == Config::BTN_EXIT) {
+                if (btn == Config::SYS_BTN_DECIDE || btn == Config::BTN_EXIT) {
                     forceScan = (scanSelectedOption == 1);
                     scanSelectionFinished = true;
                 }
@@ -386,3 +418,4 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+

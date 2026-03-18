@@ -28,6 +28,11 @@ struct BPMEvent {
     double bpm;
 };
 
+struct StopEvent {
+    int64_t y;           // 停止が発生するパルス位置
+    double  duration_ms; // 停止時間 (ms)
+};
+
 struct BMSHeader {
     std::string title, artist, genre;
     std::string modeHint;
@@ -54,7 +59,8 @@ public:
     BMSHeader header;
     std::vector<BMSSoundChannel> sound_channels;
     std::vector<BMSLine> lines;
-    std::vector<BPMEvent> bpm_events; 
+    std::vector<BPMEvent> bpm_events;
+    std::vector<StopEvent> stop_events; // #STOP / ch09 による停止イベント
     std::unordered_map<int, std::string> bga_images;
     std::vector<BgaEvent> bga_events;
     std::vector<BgaEvent> layer_events;

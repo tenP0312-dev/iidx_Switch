@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <cctype>
+#include <random>
 
 // ============================================================
 //  定数
@@ -38,17 +39,18 @@ static std::string toUpper(std::string s) {
 }
 
 // Base-36 2文字 → int  (00=0, 01=1, ..., 0Z=35, 10=36, ...)
+// base62: 0-9=0-9, A-Z=10-35, a-z=36-61
 // 無効文字は -1 を返す
-static int base36(char hi, char lo) {
+static int base62(char hi, char lo) {
     auto val = [](char c) -> int {
         if (c >= '0' && c <= '9') return c - '0';
         if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
-        if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+        if (c >= 'a' && c <= 'z') return c - 'a' + 36;
         return -1;
     };
     int h = val(hi), l = val(lo);
     if (h < 0 || l < 0) return -1;
-    return h * 36 + l;
+    return h * 62 + l;
 }
 
 // ============================================================
@@ -74,6 +76,7 @@ struct BmsRaw {
     std::string preview;
     std::string banner;
     std::string stagefile;
+    std::string videofile; // #VIDEOFILE (bemaniaDX拡張)
 
     // 拡張BPM テーブル (#BPMxx n)
     std::unordered_map<int, double> bpmTable;     // index(1〜1295) → bpm
@@ -81,9 +84,13 @@ struct BmsRaw {
     // STOP テーブル (#STOPxx n, 単位: 192分音符)
     std::unordered_map<int, double> stopTable;    // index → 192分音符数
 
+    // BMP テーブル (#BMPxx filename)
+    std::unordered_map<int, std::string> bmpTable; // index → ファイル名
+
     // LN 設定
     int     lnType = 1;   // 1=RDM, 2=MGQ
     int     lnObj  = -1;  // #LNOBJ インデックス (-1 = 未設定)
+    int     difficulty = 0; // #DIFFICULTY (0=未設定, 1=BEGINNER, 2=NORMAL, 3=HYPER, 4=ANOTHER, 5=INSANE)
 
     // 時間変化 (channel 02 = measure length multiplier)
     std::map<int, double> measureScale; // measure → スケール倍率 (デフォルト 1.0)
@@ -154,6 +161,16 @@ static bool isStopChannel(int ch) {
     return (ch == 0x09);
 }
 
+static bool isBgaChannel(int ch)   { return (ch == 0x04); }
+static bool isLayerChannel(int ch) { return (ch == 0x06); }
+static bool isPoorChannel(int ch)  { return (ch == 0x07); }
+
+// 不可視オブジェチャンネル: ch31-36, ch38-39 (1P側)
+// ch37 は FREE ZONE に相当するため除外
+static bool isInvisibleChannel(int ch) {
+    return (ch >= 0x31 && ch <= 0x36) || (ch == 0x38) || (ch == 0x39);
+}
+
 // ============================================================
 //  テキストのパース
 // ============================================================
@@ -163,10 +180,222 @@ static bool isStopChannel(int ch) {
 // 変換に失敗した場合は元の文字列をそのまま返す（ASCII曲名等はそのまま通る）。
 static std::string sjisToUtf8(const std::string& sjis) {
     if (sjis.empty()) return sjis;
-    char* utf8 = SDL_iconv_string("UTF-8", "SHIFT-JIS", sjis.c_str(), sjis.size() + 1);
-    if (!utf8) return sjis; // 変換失敗時はそのまま返す
-    std::string result(utf8);
-    SDL_free(utf8);
+    // SDL_iconv_string のエンコーディング名はプラットフォームによって異なる。
+    // macOS の SDL2 は "SHIFT-JIS" を認識しない場合があるため複数名でフォールバックする。
+    static const char* CANDIDATES[] = {
+        "SHIFT-JIS", "SHIFT_JIS", "SJIS", "CP932", "MS932", nullptr
+    };
+    for (int i = 0; CANDIDATES[i]; ++i) {
+        char* utf8 = SDL_iconv_string("UTF-8", CANDIDATES[i], sjis.c_str(), sjis.size() + 1);
+        if (utf8) {
+            std::string result(utf8);
+            SDL_free(utf8);
+            return result;
+        }
+    }
+    return sjis; // 全て失敗したらそのまま返す
+}
+
+// ============================================================
+//  chartName 決定ヘルパー
+//  優先度: #DIFFICULTY タグ > ファイル名から推測 > #PLAYLEVEL から推測
+// ============================================================
+static std::string resolveChartName(int difficulty, int playLevel,
+                                    const std::string& filePath) {
+    // 1. #DIFFICULTY タグ（最優先）
+    static const char* DIFF_NAMES[] = {
+        "", "BEGINNER", "NORMAL", "HYPER", "ANOTHER", "INSANE"
+    };
+    if (difficulty >= 1 && difficulty <= 5)
+        return DIFF_NAMES[difficulty];
+
+    // 2. ファイル名末尾から推測（SPN/SPH/SPA 等）
+    size_t slash = filePath.find_last_of("/\\");
+    std::string stem = (slash != std::string::npos) ? filePath.substr(slash + 1) : filePath;
+    size_t dot = stem.find_last_of('.');
+    if (dot != std::string::npos) stem = stem.substr(0, dot);
+    std::string up = stem;
+    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+    if (up.size() >= 3) {
+        std::string t3 = up.substr(up.size() - 3);
+        if (t3 == "SPB") return "BEGINNER";
+        if (t3 == "SPN") return "NORMAL";
+        if (t3 == "SPH") return "HYPER";
+        if (t3 == "SPA") return "ANOTHER";
+        if (t3 == "SPL") return "INSANE";
+    }
+    if (up.size() >= 2) {
+        std::string t2 = up.substr(up.size() - 2);
+        if (t2 == "_N") return "NORMAL";
+        if (t2 == "_H") return "HYPER";
+        if (t2 == "_A") return "ANOTHER";
+    }
+
+    // 3. #PLAYLEVEL から推測
+    if (playLevel <= 3)  return "BEGINNER";
+    if (playLevel <= 6)  return "NORMAL";
+    if (playLevel <= 8)  return "HYPER";
+    if (playLevel <= 11) return "ANOTHER";
+    return "INSANE";
+}
+
+// ============================================================
+//  #RANDOM プリプロセッサ
+//
+//  #RANDOM/#IF/#ENDIF 等の制御構文を処理し、
+//  有効な行だけを残した文字列を返す。
+//  parseBmsText / parseWavTable の前に適用することで
+//  既存のパース処理を変更せず RANDOM に対応できる。
+//
+//  対応構文:
+//    #RANDOM n / #RONDAM n  … 1〜n の乱数生成
+//    #SETRANDOM n           … 固定値 n（テスト用）
+//    #IF n                  … 生成値が n なら以降を有効に
+//    #ELSE                  … IF が不一致のとき有効
+//    #ELSEIF n              … 追加条件
+//    #ENDIF / #END IF       … ブロック終端
+//    #ENDRANDOM             … RANDOM ブロック終端（ネスト用）
+//  入れ子を完全サポート（スタック方式）
+// ============================================================
+
+static std::string preprocessRandom(const std::string& text) {
+    static std::mt19937 rng(std::random_device{}());
+
+    std::istringstream iss(text);
+    std::string result;
+    result.reserve(text.size());
+
+    struct RandomFrame {
+        int  generatedValue;
+        int  currentIf;   // -1=IFブロック外, 0=不一致, >0=マッチ, -2=ELSE有効
+        bool matched;
+        bool active;      // 親フレームが無効なら false
+    };
+    std::vector<RandomFrame> stack;
+
+    std::string line;
+    while (std::getline(iss, line)) {
+        // BOM 除去
+        if (line.size() >= 3 &&
+            (unsigned char)line[0] == 0xEF &&
+            (unsigned char)line[1] == 0xBB &&
+            (unsigned char)line[2] == 0xBF) {
+            line = line.substr(3);
+        }
+        std::string trimmed = trim(line);
+
+        if (trimmed.empty() || trimmed[0] != '#') {
+            // 制御行以外: 現在のスタック状態で出力判定
+            bool out = true;
+            for (const auto& f : stack) {
+                if (!f.active || f.currentIf == 0) { out = false; break; }
+            }
+            if (out) { result += line; result += '\n'; }
+            continue;
+        }
+
+        // コマンド名取得（大文字化）
+        size_t sp = trimmed.find_first_of(" \t", 1);
+        std::string cmd = toUpper(trimmed.substr(1, sp == std::string::npos ? std::string::npos : sp - 1));
+        std::string val = (sp == std::string::npos) ? "" : trim(trimmed.substr(sp + 1));
+
+        // #RANDOM n / #RONDAM n（誤字対応）
+        if (cmd == "RANDOM" || cmd == "RONDAM") {
+            int n = 1;
+            try { n = std::stoi(val); } catch (...) {}
+            if (n < 1) n = 1;
+            int generated = std::uniform_int_distribution<int>(1, n)(rng);
+            bool parentActive = true;
+            for (const auto& f : stack) {
+                if (!f.active || f.currentIf == 0) { parentActive = false; break; }
+            }
+            stack.push_back({generated, -1, false, parentActive});
+            continue;
+        }
+
+        // #SETRANDOM n
+        if (cmd == "SETRANDOM") {
+            int n = 1;
+            try { n = std::stoi(val); } catch (...) {}
+            bool parentActive = true;
+            for (const auto& f : stack) {
+                if (!f.active || f.currentIf == 0) { parentActive = false; break; }
+            }
+            stack.push_back({n, -1, false, parentActive});
+            continue;
+        }
+
+        // #IF n
+        if (cmd == "IF") {
+            int n = 0;
+            try { n = std::stoi(val); } catch (...) {}
+            if (!stack.empty()) {
+                auto& f = stack.back();
+                if (f.generatedValue == n && !f.matched) {
+                    f.currentIf = n;
+                    f.matched   = true;
+                } else {
+                    f.currentIf = 0;
+                }
+            }
+            continue;
+        }
+
+        // #ELSEIF n
+        if (cmd == "ELSEIF") {
+            int n = 0;
+            try { n = std::stoi(val); } catch (...) {}
+            if (!stack.empty()) {
+                auto& f = stack.back();
+                if (!f.matched && f.generatedValue == n) {
+                    f.currentIf = n;
+                    f.matched   = true;
+                } else {
+                    f.currentIf = 0;
+                }
+            }
+            continue;
+        }
+
+        // #ELSE
+        if (cmd == "ELSE") {
+            if (!stack.empty()) {
+                auto& f = stack.back();
+                if (!f.matched) {
+                    f.currentIf = -2;
+                    f.matched   = true;
+                } else {
+                    f.currentIf = 0;
+                }
+            }
+            continue;
+        }
+
+        // #ENDIF / #END IF（誤字対応）
+        if (cmd == "ENDIF" || (cmd == "END" && val == "IF")) {
+            if (!stack.empty()) {
+                stack.back().currentIf = -1;
+            }
+            continue;
+        }
+
+        // #ENDRANDOM
+        if (cmd == "ENDRANDOM") {
+            if (!stack.empty()) stack.pop_back();
+            continue;
+        }
+
+        // 通常のコマンド行: スタック状態で出力判定
+        bool output = true;
+        for (const auto& f : stack) {
+            if (!f.active || f.currentIf == 0) { output = false; break; }
+        }
+        if (output) {
+            result += line;
+            result += '\n';
+        }
+    }
+
     return result;
 }
 
@@ -236,7 +465,7 @@ static void parseBmsText(const std::string& text, BmsRaw& raw) {
             // #BPMxx n
             std::string idStr = cmd.substr(3);
             if (idStr.size() == 2) {
-                int idx = base36(idStr[0], idStr[1]);
+                int idx = base62(idStr[0], idStr[1]);
                 if (idx > 0 && !value.empty()) {
                     try { raw.bpmTable[idx] = std::stod(value); } catch (...) {}
                 }
@@ -245,7 +474,7 @@ static void parseBmsText(const std::string& text, BmsRaw& raw) {
         else if (cmd.substr(0, 4) == "STOP" && cmd.size() > 4) {
             std::string idStr = cmd.substr(4);
             if (idStr.size() == 2) {
-                int idx = base36(idStr[0], idStr[1]);
+                int idx = base62(idStr[0], idStr[1]);
                 if (idx > 0 && !value.empty()) {
                     try { raw.stopTable[idx] = std::stod(value); } catch (...) {}
                 }
@@ -258,10 +487,20 @@ static void parseBmsText(const std::string& text, BmsRaw& raw) {
         else if (cmd == "PREVIEW")   { raw.preview   = value; }
         else if (cmd == "BANNER")    { raw.banner    = value; }
         else if (cmd == "STAGEFILE") { raw.stagefile = value; }
+        else if (cmd == "VIDEOFILE") { raw.videofile = value; } // bemaniaDX拡張
+        else if (cmd.substr(0, 3) == "BMP" && cmd.size() == 5) {
+            // #BMPxx filename
+            std::string idStr = cmd.substr(3, 2);
+            int idx = base62(idStr[0], idStr[1]);
+            if (idx >= 0 && !value.empty()) {
+                raw.bmpTable[idx] = value;
+            }
+        }
         else if (cmd == "LNTYPE")    { try { raw.lnType = std::stoi(value); } catch (...) {} }
+        else if (cmd == "DIFFICULTY"){ try { raw.difficulty = std::stoi(value); } catch (...) {} }
         else if (cmd == "LNOBJ") {
             if (value.size() == 2) {
-                int idx = base36(value[0], value[1]);
+                int idx = base62(value[0], value[1]);
                 if (idx > 0) raw.lnObj = idx;
             }
         }
@@ -285,7 +524,7 @@ static void parseWavTable(const std::string& text,
         if (cmd.size() < 5) continue;
         std::string idStr = cmd.substr(3, 2);
         if (idStr.size() != 2) continue;
-        int idx = base36(idStr[0], idStr[1]);
+        int idx = base62(idStr[0], idStr[1]);
         if (idx <= 0) continue;
         size_t sp = line.find_first_of(" \t", 1);
         if (sp == std::string::npos) continue;
@@ -298,8 +537,10 @@ static void parseWavTable(const std::string& text,
 //  BmsRaw → BMSData 変換
 // ============================================================
 
+
 static BMSData convertToData(const BmsRaw& raw,
-                             const std::unordered_map<int, std::string>& wavTable) {
+                             const std::unordered_map<int, std::string>& wavTable,
+                             const std::string& filePath = "") {
     BMSData data;
     BMSHeader& h = data.header;
 
@@ -318,7 +559,7 @@ static BMSData convertToData(const BmsRaw& raw,
     h.banner     = raw.banner;
     h.modeHint   = (raw.player == 3) ? "beat-14k" : "beat-7k";
     h.is7Key     = true; // 後で再判定
-    h.chartName  = "NORMAL";
+    h.chartName  = resolveChartName(raw.difficulty, raw.playLevel, filePath);
 
     // ------------------------------------
     // 各小節の開始 y 座標を計算する
@@ -445,7 +686,7 @@ static BMSData convertToData(const BmsRaw& raw,
     struct NoteEvent {
         int64_t y;
         int     channel;
-        int     wavIdx;  // base36 で取得したオブジェクトID
+        int     wavIdx;  // base62 で取得したオブジェクトID
     };
     std::vector<NoteEvent> events;
     events.reserve(raw.messages.size() * 8);
@@ -465,9 +706,9 @@ static BMSData convertToData(const BmsRaw& raw,
                          ? measureStartY[msg.measure] : 0;
 
         for (int i = 0; i < slots; ++i) {
-            char hi = std::toupper((unsigned char)d[i * 2]);
-            char lo = std::toupper((unsigned char)d[i * 2 + 1]);
-            int  idx = base36(hi, lo);
+            char hi = d[i * 2];
+            char lo = d[i * 2 + 1];
+            int  idx = base62(hi, lo);
             if (idx == 0) continue; // 00 = rest
 
             int64_t y = startY + (int64_t)std::round((double)i / slots * measureLen);
@@ -491,15 +732,35 @@ static BMSData convertToData(const BmsRaw& raw,
     bool hasKey6or7 = false; // x7 or x8 が使われているか
     int  playableCount = 0;
 
+    // BGA イベント収集用
+    std::vector<BgaEvent> bgaEvents, layerEvents, poorEvents;
+
+    // STOP イベント仮置き: {y, stopValue(192分音符数)}
+    struct StopRaw { int64_t y; double stopValue; };
+    std::vector<StopRaw> stopEventsRaw;
+
     for (const auto& ev : events) {
         int ch  = ev.channel;
         int idx = ev.wavIdx;
 
         // BPM 変化 (ch03 = 16進直接値)
+        // ch03 の2文字は hex 表記（00〜FF）。
+        // ノーツ展開時に base62 でidxを計算しているため、元の2文字を逆算してhex値に戻す。
+        // base62(hi, lo)=idx → hi=idx/62, lo=idx%62 → hex値を得る
         if (ch == 0x03) {
-            // idx は base36 で取得しているが ch03 は hex 値として使用
-            // base36 で取得した値はそのまま使える (0〜255)
-            double newBpm = (double)idx;
+            int b62hi = idx / 62;
+            int b62lo = idx % 62;
+            // 0-9 → そのまま, 10-15 → A-F (hexとして有効)
+            // 16以上 → hex文字として無効（G-Z, a-z はch03では使用しない）
+            auto hexDigit = [](int v) -> int {
+                if (v >= 0 && v <= 15) return v;
+                return -1;
+            };
+            int hexHi = hexDigit(b62hi);
+            int hexLo = hexDigit(b62lo);
+            double newBpm = (hexHi >= 0 && hexLo >= 0)
+                            ? (double)(hexHi * 16 + hexLo)
+                            : (double)idx; // フォールバック
             if (newBpm > 0) {
                 data.bpm_events.push_back({ev.y, newBpm});
                 if (newBpm < h.min_bpm) h.min_bpm = newBpm;
@@ -522,13 +783,49 @@ static BMSData convertToData(const BmsRaw& raw,
             continue;
         }
 
-        // STOP チャンネル (ch09) は現在未実装（将来対応）
-        if (ch == 0x09) continue;
+        // STOP チャンネル (ch09): stopTable を参照して収集
+        if (ch == 0x09) {
+            auto it = raw.stopTable.find(idx);
+            if (it != raw.stopTable.end() && it->second > 0) {
+                // duration_ms はこの時点のBPMが必要なので仮置きとして y と stopValue を記録
+                // 後でbpm_eventsを使って変換する
+                stopEventsRaw.push_back({ev.y, it->second});
+            }
+            continue;
+        }
 
         // BGM チャンネル (ch01)
         if (ch == 0x01) {
             size_t ci = getOrAddChannel(idx);
             data.sound_channels[ci].notes.push_back({0, ev.y, 0, 0.0});
+            continue;
+        }
+
+        // 不可視オブジェ (ch31-36, ch38-39)
+        // 表示・判定・スコアなし。キー入力時に発音する。
+        // ch3x → ch1x に正規化してレーンを取得し、x を負値として格納する。
+        // PlayEngine::init で負値 x を検出して laneHiddenNotes に振り分ける。
+        if (isInvisibleChannel(ch)) {
+            int normCh = ch - 0x20; // 0x31→0x11, ..., 0x36→0x16, 0x38→0x18, 0x39→0x19
+            int x = channelToX(normCh);
+            if (x >= 1 && x <= 8) {
+                size_t ci = getOrAddChannel(idx);
+                data.sound_channels[ci].notes.push_back({-(int64_t)x, ev.y, 0, 0.0});
+            }
+            continue;
+        }
+
+        // BGA チャンネル (ch04 = base, ch06 = poor, ch07 = layer)
+        if (isBgaChannel(ch)) {
+            bgaEvents.push_back({ev.y, idx});
+            continue;
+        }
+        if (isLayerChannel(ch)) {
+            layerEvents.push_back({ev.y, idx});
+            continue;
+        }
+        if (isPoorChannel(ch)) {
+            poorEvents.push_back({ev.y, idx});
             continue;
         }
 
@@ -619,11 +916,70 @@ static BMSData convertToData(const BmsRaw& raw,
     std::sort(data.bpm_events.begin(), data.bpm_events.end(),
               [](const BPMEvent& a, const BPMEvent& b){ return a.y < b.y; });
 
+    // STOP イベントを duration_ms に変換して格納
+    // 仕様: stopValue は「1小節を192分割した単位数」。
+    // 1小節 = 4拍 = 4*(60000/bpm) ms なので
+    // duration_ms = stopValue * 60000 / (bpm * 48)
+    // y位置での BPM を bpm_events から求める。
+    if (!stopEventsRaw.empty()) {
+        std::sort(stopEventsRaw.begin(), stopEventsRaw.end(),
+                  [](const StopRaw& a, const StopRaw& b){ return a.y < b.y; });
+        for (const auto& sr : stopEventsRaw) {
+            // sr.y 直前の BPM を取得
+            double bpm = h.bpm;
+            for (const auto& bev : data.bpm_events) {
+                if (bev.y > sr.y) break;
+                bpm = bev.bpm;
+            }
+            if (bpm <= 0) bpm = 120.0;
+            double duration_ms = sr.stopValue * 60000.0 / (bpm * 48.0);
+            data.stop_events.push_back({sr.y, duration_ms});
+        }
+    }
+
     // ヘッダー更新
     h.totalNotes = playableCount;
     h.total      = (raw.total > 0) ? raw.total : (double)playableCount;
     h.is7Key     = hasKey6or7;
     h.modeHint   = (raw.player == 3) ? "beat-14k" : (h.is7Key ? "beat-7k" : "beat-5k");
+
+    // BGA: #VIDEOFILE が最優先。なければ bmpTable から動画を探す。
+    // #VIDEOFILE
+    if (!raw.videofile.empty()) {
+        h.bga_video = raw.videofile;
+    }
+
+    // bmpTable → bga_images / bga_video に振り分け
+    auto isVideoFile = [](const std::string& name) -> bool {
+        if (name.size() < 4) return false;
+        std::string low = name;
+        std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+        return low.find(".mp4")  != std::string::npos ||
+               low.find(".wmv")  != std::string::npos ||
+               low.find(".avi")  != std::string::npos ||
+               low.find(".mov")  != std::string::npos ||
+               low.find(".m4v")  != std::string::npos ||
+               low.find(".mpg")  != std::string::npos ||
+               low.find(".mpeg") != std::string::npos;
+    };
+    for (auto& [id, filename] : raw.bmpTable) {
+        if (isVideoFile(filename)) {
+            // #VIDEOFILE が未設定のときだけ採用（最初の動画のみ）
+            if (h.bga_video.empty()) {
+                h.bga_video = filename;
+            }
+        } else {
+            data.bga_images[id] = filename;
+        }
+    }
+
+    // BGAイベントをソートして格納
+    std::sort(bgaEvents.begin(),   bgaEvents.end(),   [](auto& a, auto& b){ return a.y < b.y; });
+    std::sort(layerEvents.begin(), layerEvents.end(), [](auto& a, auto& b){ return a.y < b.y; });
+    std::sort(poorEvents.begin(),  poorEvents.end(),  [](auto& a, auto& b){ return a.y < b.y; });
+    data.bga_events   = std::move(bgaEvents);
+    data.layer_events = std::move(layerEvents);
+    data.poor_events  = std::move(poorEvents);
 
     return data;
 }
@@ -662,8 +1018,11 @@ BMSData BmsLoader::load(const std::string& path,
     std::string text = readFileText(path);
     if (text.empty()) return BMSData{};
 
+    // #RANDOM/#IF/#ENDIF 等の制御構文を処理し、有効な行だけを抽出
+    std::string processed = preprocessRandom(text);
+
     BmsRaw raw;
-    parseBmsText(text, raw);
+    parseBmsText(processed, raw);
 
     // 02チャンネル (measure scale) を再スキャンして反映
     for (const auto& msg : raw.messages) {
@@ -676,11 +1035,11 @@ BMSData BmsLoader::load(const std::string& path,
     }
 
     std::unordered_map<int, std::string> wavTable;
-    parseWavTable(text, wavTable);
+    parseWavTable(processed, wavTable);
 
     if (onProgress) onProgress(0.5f);
 
-    BMSData data = convertToData(raw, wavTable);
+    BMSData data = convertToData(raw, wavTable, path);
 
     // ファイルパスから rootDir を設定するためのメタ情報
     // (SoundManager が相対パスを解決できるよう、
@@ -696,8 +1055,11 @@ BMSHeader BmsLoader::loadHeader(const std::string& path) {
     std::string text = readFileText(path);
     if (text.empty()) return BMSHeader{};
 
+    // #RANDOM/#IF/#ENDIF 等の制御構文を処理
+    std::string processed = preprocessRandom(text);
+
     BmsRaw raw;
-    parseBmsText(text, raw);
+    parseBmsText(processed, raw);
 
     // 02チャンネルを先行処理
     for (const auto& msg : raw.messages) {
@@ -728,9 +1090,9 @@ BMSHeader BmsLoader::loadHeader(const std::string& path) {
         if (d.size() < 2 || d.size() % 2 != 0) continue;
         int slots = (int)(d.size() / 2);
         for (int i = 0; i < slots; ++i) {
-            char hi = std::toupper((unsigned char)d[i * 2]);
-            char lo = std::toupper((unsigned char)d[i * 2 + 1]);
-            int  idx = base36(hi, lo);
+            char hi = d[i * 2];
+            char lo = d[i * 2 + 1];
+            int  idx = base62(hi, lo);
             if (idx == 0) continue;
             int x = channelToX(ch);
             if (x == 7 || x == 8) hasKey6or7 = true;
@@ -762,7 +1124,17 @@ BMSHeader BmsLoader::loadHeader(const std::string& path) {
     h.totalNotes = totalNotes;
     h.modeHint   = (raw.player == 3) ? "beat-14k"
                  : (hasKey6or7 ? "beat-7k" : "beat-5k");
-    h.chartName  = "NORMAL";
+    h.chartName  = resolveChartName(raw.difficulty, raw.playLevel, path);
     return h;
 }
+
+
+
+
+
+
+
+
+
+
 

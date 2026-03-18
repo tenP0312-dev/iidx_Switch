@@ -1,18 +1,8 @@
 #---------------------------------------------------------------------------------
-# .nroを作成するための Makefile (FFmpeg対応版 / 並列フルビルド)
-#
-# 使い方:
-#   make rebuild     -- clean してから並列ビルド (通常はこれ)
-#   make -j$(nproc)  -- 並列ビルドのみ (cleanなし)
-#   make clean       -- ビルド成果物を削除
-#
-# "Nothing to be done" 問題について:
-#   .d依存追跡を廃止しているため、オブジェクトが残っていると
-#   makeがソース変更を検知できない。毎回 make rebuild で解決。
+# Nintendo Switch (nro) & macOS 共通 Makefile
 #---------------------------------------------------------------------------------
-TARGET      := sdl2_red_square
+TARGET      := GeminiRhythm
 BUILD       := build
-OUTPUT      := $(BUILD)/$(TARGET)
 SOURCES     := main.cpp BmsonLoader.cpp SoundManager.cpp NoteRenderer.cpp \
                SceneSelect.cpp ScenePlay.cpp SceneResult.cpp PlayEngine.cpp ScoreManager.cpp \
                SceneTitle.cpp SceneDecision.cpp SceneSelectView.cpp SongManager.cpp \
@@ -20,78 +10,103 @@ SOURCES     := main.cpp BmsonLoader.cpp SoundManager.cpp NoteRenderer.cpp \
                SceneSideSelect.cpp VirtualFolderManager.cpp BgaManager.cpp BmsLoader.cpp \
                Scene2PDiffSelect.cpp
 
-# --- devkitProのパス設定 (自動取得) ---
-ifeq ($(strip $(DEVKITPRO)),)
-$(error "DEVKITPRO environment variable is not set. Please restart your terminal.")
+# 並列ビルド数の設定
+JOBS        ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+
+# オブジェクトファイルと依存関係ファイル
+OBJS        := $(addprefix $(BUILD)/, $(SOURCES:.cpp=.o))
+DEPS        := $(OBJS:.o=.d)
+
+# 基本設定
+CXXFLAGS    := -Wall -O2 -MMD -MP -I.
+LDFLAGS     := 
+
+# --- macOS 設定 (Homebrew パス自動検知) ---
+ifeq ($(OS),Windows_NT)
+    # Windows非対応
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Darwin)
+        BREW_PREFIX := $(shell brew --prefix)
+        MAC_CXX      := clang++
+        MAC_CXXFLAGS := $(CXXFLAGS) -std=c++20 \
+                        -I$(BREW_PREFIX)/include \
+                        -I$(BREW_PREFIX)/include/SDL2
+        MAC_LDFLAGS  := -L$(BREW_PREFIX)/lib \
+                        -lSDL2 -lSDL2_mixer -lSDL2_ttf -lSDL2_image \
+                        -lavformat -lavcodec -lswscale -lavutil \
+                        -framework Cocoa -framework AudioToolbox -framework CoreAudio
+    endif
 endif
 
-DEVKITA64   := $(DEVKITPRO)/devkitA64
-LIBNX       := $(DEVKITPRO)/libnx
-PORTLIBS    := $(DEVKITPRO)/portlibs/switch
+# --- Switch 設定 (devkitPro) ---
+ifeq ($(strip $(DEVKITPRO)),)
+    # Switch環境変数が無い場合は警告
+else
+    DEVKITA64 := $(DEVKITPRO)/devkitA64
+    LIBNX     := $(DEVKITPRO)/libnx
+    PORTLIBS  := $(DEVKITPRO)/portlibs/switch
+    
+    SW_CXX      := $(DEVKITA64)/bin/aarch64-none-elf-g++
+    SW_CXXFLAGS := $(CXXFLAGS) -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -D__SWITCH__ \
+                   -I$(PORTLIBS)/include -I$(LIBNX)/include -I$(PORTLIBS)/include/SDL2
+    SW_LDFLAGS  := -specs=$(LIBNX)/switch.specs -march=armv8-a -mtune=cortex-a57 -fPIE \
+                   -L$(PORTLIBS)/lib -L$(LIBNX)/lib \
+                   -Wl,--start-group \
+                   -lavformat -lavcodec -lswscale -lswresample -lavutil -ldav1d \
+                   -lSDL2 -lSDL2_image -lSDL2_mixer -lSDL2_ttf \
+                   -lmodplug -lmpg123 -lvorbisfile -lopusfile -lvorbis -lopus -logg \
+                   -lfreetype -lharfbuzz -lbz2 -lpng -ljpeg -lwebp -lz \
+                   -Wl,--end-group -lEGL -lglapi -ldrm_nouveau -lnx -lm -lpthread
 
-# --- ツール類のパスを指定 ---
-CC      := $(DEVKITA64)/bin/aarch64-none-elf-g++
-ELF2NRO := $(DEVKITPRO)/tools/bin/elf2nro
-NACPTOOL:= $(DEVKITPRO)/tools/bin/nacptool
+    ELF2NRO     := $(DEVKITPRO)/tools/bin/elf2nro
+    NACPTOOL    := $(DEVKITPRO)/tools/bin/nacptool
+    ICON        := $(LIBNX)/default_icon.jpg
+endif
 
-# --- アイコンなどの設定 ---
-ICON        := $(LIBNX)/default_icon.jpg
-NACP        := $(OUTPUT).nacp
-NACP_TITLE  := "SDL2 Red Square"
-NACP_AUTHOR := "User"
-NACP_VERSION:= "1.0.0"
+#---------------------------------------------------------------------------------
+# ターゲット別ビルドルール
+#---------------------------------------------------------------------------------
 
-# --- コンパイルオプション ---
-CFLAGS  := -Wall -Os -ffunction-sections -fdata-sections -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE
-CFLAGS  += -D__SWITCH__
-CFLAGS  += -I$(PORTLIBS)/include -I$(LIBNX)/include
-CFLAGS  += -I$(PORTLIBS)/include/SDL2
-CFLAGS  += -I$(PORTLIBS)/include/SDL2_mixer
-CFLAGS  += -I$(PORTLIBS)/include/SDL2_ttf
-CFLAGS  += -I.
+.PHONY: all switch mac clean rebuild
 
-# --- リンクオプション ---
-LDFLAGS := -specs=$(LIBNX)/switch.specs -march=armv8-a -mtune=cortex-a57 -fPIE
-LDFLAGS += -L$(PORTLIBS)/lib -L$(LIBNX)/lib
-LDFLAGS += -Wl,--start-group \
-    -lavformat -lavcodec -lswscale -lswresample -lavutil \
-    -ldav1d \
-    -lSDL2 -lSDL2_image -lSDL2_mixer -lSDL2_ttf \
-    -lmodplug -lmpg123 -lvorbisfile -lopusfile -lvorbis -lopus -logg \
-    -lfreetype -lharfbuzz -lbz2 -lpng -ljpeg -lwebp -lz \
-    -Wl,--end-group
-LDFLAGS += -lEGL -lglapi -ldrm_nouveau -lnx -lm -lpthread
+# デフォルトは Switch 版
+all: switch
 
-# --- 並列数: 環境変数 JOBS で上書き可能、デフォルトは論理コア数 ---
-JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+# --- Switch 版ビルド ---
+switch:
+	@mkdir -p $(BUILD)
+	$(MAKE) -j$(JOBS) $(BUILD)/$(TARGET).nro CXX="$(SW_CXX)" CXXFLAGS="$(SW_CXXFLAGS)" LDFLAGS="$(SW_LDFLAGS)"
 
-# --- オブジェクトファイル ---
-OBJS := $(addprefix $(BUILD)/, $(SOURCES:.cpp=.o))
+# --- Mac 版ビルド ---
+mac:
+	@mkdir -p $(BUILD)
+	$(MAKE) -j$(JOBS) $(BUILD)/$(TARGET)_mac CXX="$(MAC_CXX)" CXXFLAGS="$(MAC_CXXFLAGS)" LDFLAGS="$(MAC_LDFLAGS)"
 
-.PHONY: all rebuild clean
+# 実行ファイル生成 (Switch ELF)
+$(BUILD)/$(TARGET).elf: $(OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
 
-all: $(OUTPUT).nro
+# NRO 生成
+$(BUILD)/$(TARGET).nro: $(BUILD)/$(TARGET).elf
+	$(NACPTOOL) --create "GeminiRhythm" "User" "1.0.0" $(BUILD)/$(TARGET).nacp
+	$(ELF2NRO) $< $@ --icon=$(ICON) --nacp=$(BUILD)/$(TARGET).nacp
 
-# --- rebuild: clean → 並列フルビルド (通常の使い方) ---
-rebuild:
-	$(MAKE) clean
-	$(MAKE) -j$(JOBS) all
+# 実行ファイル生成 (Mac)
+$(BUILD)/$(TARGET)_mac: $(OBJS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
 
-# --- リンク ---
-$(OUTPUT).elf: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-# --- 個別コンパイル ---
+# コンパイルルール
 $(BUILD)/%.o: %.cpp
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-# --- NACP / NRO ---
-$(NACP):
-	$(NACPTOOL) --create $(NACP_TITLE) $(NACP_AUTHOR) $(NACP_VERSION) $@
-
-$(OUTPUT).nro: $(OUTPUT).elf $(NACP)
-	$(ELF2NRO) $< $@ --icon=$(ICON) --nacp=$(NACP)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
-	@rm -rf $(BUILD)
+	rm -rf $(BUILD)
+
+rebuild:
+	$(MAKE) clean
+	$(MAKE) all
+
+# 依存関係ファイルの読み込み（これでヘッダー変更が検知される）
+-include $(DEPS)

@@ -119,9 +119,9 @@ void ScoreManager::saveIfBest(const std::string& title, const std::string& chart
         return;
     }
 
-    // MORE NOTES (EX_OPTION==3) はノーツ数が変わるため、スコア・コンボは参考値にならない。
+    // MORE NOTES (EX_OPTION==2) はノーツ数が変わるため、スコア・コンボは参考値にならない。
     // クリアランプのみ保存し、スコア・コンボ更新は行わない。
-    const bool isMoreNotes = (Config::EX_OPTION == 3);
+    const bool isMoreNotes = (Config::EX_OPTION == 2);
 
     BestScore currentBest = loadScore(title, chartName, totalNotes);
     int currentExScore = calculateExScore(status.pGreatCount, status.greatCount);
@@ -129,6 +129,8 @@ void ScoreManager::saveIfBest(const std::string& title, const std::string& chart
     ClearType currentType = status.clearType;
 
     bool scoreUpdated = !isMoreNotes && (currentExScore > currentBest.exScore);
+    // AUTO PLAY (ASSIST_OPTION==7) はsaveIfBest冒頭でreturn済み。
+    // クリアランプ更新: AUTO PLAYを除く全ASSISTはASSIST_CLEARでのみ更新可能。
     bool lampUpdated  = (static_cast<int>(currentType) > static_cast<int>(currentBest.clearType));
     bool comboUpdated = !isMoreNotes && (status.maxCombo > currentBest.maxCombo);
 
@@ -175,6 +177,7 @@ void ScoreManager::saveIfBest(const std::string& title, const std::string& chart
         scoreCache[uniqueId] = newBest;
     }
 }
+
 
 
 

@@ -478,14 +478,14 @@ std::string SceneSelect::update(SDL_Renderer* ren, NoteRenderer& renderer, int c
                 if (btn == Config::SYS_BTN_UP) {
                     if (optionCategoryIndex == 0) Config::PLAY_OPTION = (Config::PLAY_OPTION + 4) % 5;
                     else if (optionCategoryIndex == 1) Config::GAUGE_OPTION = (Config::GAUGE_OPTION + 6) % 7;
-                    else if (optionCategoryIndex == 2) Config::ASSIST_OPTION = (Config::ASSIST_OPTION + 7) % 8;
-                    else if (optionCategoryIndex == 3) Config::EX_OPTION = (Config::EX_OPTION + 4) % 5;
+                    else if (optionCategoryIndex == 2) Config::ASSIST_OPTION = (Config::ASSIST_OPTION + 8) % 9;
+                    else if (optionCategoryIndex == 3) Config::EX_OPTION = (Config::EX_OPTION + 2) % 3;
                 }
                 if (btn == Config::SYS_BTN_DOWN) {
                     if (optionCategoryIndex == 0) Config::PLAY_OPTION = (Config::PLAY_OPTION + 1) % 5;
                     else if (optionCategoryIndex == 1) Config::GAUGE_OPTION = (Config::GAUGE_OPTION + 1) % 7;
-                    else if (optionCategoryIndex == 2) Config::ASSIST_OPTION = (Config::ASSIST_OPTION + 1) % 8;
-                    else if (optionCategoryIndex == 3) Config::EX_OPTION = (Config::EX_OPTION + 1) % 5;
+                    else if (optionCategoryIndex == 2) Config::ASSIST_OPTION = (Config::ASSIST_OPTION + 1) % 9;
+                    else if (optionCategoryIndex == 3) Config::EX_OPTION = (Config::EX_OPTION + 1) % 3;
                 }
                 double currentBPM = 150.0;
                 if (!songGroups.empty() && !songGroups[selectedIndex].isFolder) {
@@ -646,6 +646,7 @@ bool SceneSelect::isOneMoreFolderSelected() const {
 
 void SceneSelect::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& renderer) {}
 void SceneSelect::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer) {}
+
 
 
 

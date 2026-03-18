@@ -94,6 +94,7 @@ struct PlayableNote {
 
     bool played         = false;
     bool isBGM          = false;
+    bool isInvisible    = false; // 不可視オブジェ: 表示・判定・スコアなし、キー入力時に発音
 
     // ロングノーツ用
     bool   isLN          = false;
@@ -101,6 +102,10 @@ struct PlayableNote {
     double  duration_ms  = 0.0;
     bool    isBeingPressed = false;
     bool    end_processed  = false;
+
+    // ★HCN: 最後にティックを処理した時刻(ms)。
+    // -1.0 = 未使用（CN/LNでは参照しない）
+    double hcnLastTickMs = -1.0;
 
     // BSS (Back Spin Scratch): LN2本以上がgap=32で連続し末尾が単発(gap=0)で終わるチェーン
     bool isBSSHead = false; // チェーン先頭LN: bss_s + ボディ
@@ -194,13 +199,3 @@ struct VideoFrame {
 };
 
 #endif // COMMONTYPES_HPP
-
-
-
-
-
-
-
-
-
-

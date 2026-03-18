@@ -57,6 +57,12 @@ private:
     //          laneSearchStart[lane] = 次に検索を始めるべき laneNoteIndices 内の位置
     std::array<std::vector<size_t>, 9> laneNoteIndices;
     std::array<size_t, 9> laneSearchStart = {};
+
+    // 不可視オブジェ: レーン別のキュー（target_ms 昇順）。
+    // キー入力時に先頭から消費し、可視ノーツの soundId を上書き発音する。
+    std::array<std::vector<PlayableNote>, 9> laneHiddenNotes;
+    std::array<size_t, 9> hiddenSearchStart = {};
 };
 
 #endif
+

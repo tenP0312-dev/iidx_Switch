@@ -186,8 +186,8 @@ void SceneSelectView::renderOptionOverlay(SDL_Renderer* ren, NoteRenderer& rende
     std::vector<Category> cats = {
         {"STYLE", {255, 140, 0, 255}, {"OFF", "RANDOM", "R-RANDOM", "S-RANDOM", "MIRROR"}, Config::PLAY_OPTION, "LEFT / RIGHT"},
         {"GAUGE", {50, 205, 50, 255}, {"OFF", "A-EASY", "EASY", "HARD", "EX-HARD", "DAN", "HAZARD"}, Config::GAUGE_OPTION, "UP / DOWN"},
-        {"ASSIST", {147, 112, 219, 255}, {"OFF", "AUTO SCR", "LEGACY", "5KEYS", "ASCR+LEG", "ASCR+5K", "FULL ASST", "AUTO PLAY"}, Config::ASSIST_OPTION, "LEVEL BUTTON"},
-        {"EX", {0, 191, 255, 255}, {"OFF", "ALL SCR", "SCR ONLY", "MORE NOTES", "タピオカウメェス"}, Config::EX_OPTION, "TO DETAIL"}
+        {"ASSIST", {147, 112, 219, 255}, {"OFF", "AUTO SCR", "LEGACY", "5KEYS", "ASCR+LEG", "ASCR+5K", "FULL ASST", "AUTO PLAY", "SCR ONLY"}, Config::ASSIST_OPTION, "LEVEL BUTTON"},
+        {"EX", {0, 191, 255, 255}, {"OFF", "ALL SCR", "MORE NOTES"}, Config::EX_OPTION, "TO DETAIL"}
     };
 
     int panelW = 260, panelH = 500, startX = 100, startY = 110;
@@ -334,6 +334,7 @@ void SceneSelectView::renderExitDialog(SDL_Renderer* ren, NoteRenderer& renderer
     renderer.drawText(ren, "SCRATCH: SELECT YES/NO | LEVEL BUTTON: BACK TO MODE SELECT", 640, 540, {200,200,200,255}, false, true, false, "");
     renderer.drawText(ren, "PRESS DECIDE KEY TO CONFIRM", 640, 580, {255,255,255,255}, false, true, false, "");
 }
+
 
 
 

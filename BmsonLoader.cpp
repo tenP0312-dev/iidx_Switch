@@ -163,7 +163,10 @@ static void parse_bmson_internal(const nlohmann::json& j, BMSData& data, const s
                 for (auto& e : bga_node[key]) {
                     int id = e.value("id", 0);
                     target.push_back({e.value("y", (int64_t)0), id});
-                    if (idToName.count(id) && idToName[id] == data.header.bga_video) {
+                    // bga_offset は動画IDが最初に登場したときのy座標を使う
+                    // 複数回登場しても上書きしない
+                    if (data.header.bga_offset == 0 &&
+                        idToName.count(id) && idToName[id] == data.header.bga_video) {
                         data.header.bga_offset = e.value("y", (int64_t)0);
                     }
                 }
@@ -293,6 +296,8 @@ BMSHeader BmsonLoader::loadHeader(const std::string& path) {
     } catch (...) {}
     return BMSHeader{};
 }
+
+
 
 
 

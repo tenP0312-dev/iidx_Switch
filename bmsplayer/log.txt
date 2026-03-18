@@ -1,0 +1,10 @@
+=== GeminiRhythm Log ===
+=== Build: Mar 16 2026 16:20:35 ===
+[      0ms][INFO ][main] === App Start ===
+[      0ms][INFO ][main] ROOT_PATH: /Users/tenp/Desktop/iidx/bmsplayer/
+[      0ms][INFO ][main] heap at startup: 0MB
+[    323ms][INFO ][SoundManager] Mix_OpenAudio OK (22050Hz, mono, buf=512)
+[    323ms][INFO ][SoundManager] init complete. channels=256
+[    358ms][INFO ][NoteRenderer] init done: skin textures OK=51 FAIL=0 bombs=10
+[ 237202ms][INFO ][SoundManager] clear() start: sounds=0 mem=0MB
+[ 237202ms][INFO ][SoundManager] clear() done

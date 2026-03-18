@@ -912,3 +912,4 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
 
 
 
+
