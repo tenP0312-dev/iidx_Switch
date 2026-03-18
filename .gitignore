@@ -1,0 +1,7 @@
+build/
+bmsplayer/BMS/
+bmsplayer/GeminiRhythm_mac
+bmsplayer/log.txt
+bmsplayer/songlist.dat
+bmsplayer/scores/
+.DS_Store
