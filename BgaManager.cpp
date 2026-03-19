@@ -12,82 +12,107 @@ static const long long BMP_LOOK_AHEAD = 300000;
 //  FFmpegAllocator — 静的メンバ定義
 // ============================================================
 
-alignas(16) uint8_t FFmpegAllocator::heap[FFmpegAllocator::FFMPEG_HEAP_SIZE];
-size_t              FFmpegAllocator::heapPos  = 0;
-bool                FFmpegAllocator::installed = false;
+alignas(32) uint8_t        FFmpegAllocator::heap[FFmpegAllocator::FFMPEG_HEAP_SIZE];
+size_t                     FFmpegAllocator::heapPos   = 0;
+bool                       FFmpegAllocator::installed = false;
+FFmpegAllocator::BlockHeader* FFmpegAllocator::freeLists[FFmpegAllocator::N_BINS] = {};
 
 // ------------------------------------------------------------
 //  ffmpegMalloc
 //
-//  アリーナから線形確保 (バンプアロケータ)。
-//  ブロックヘッダ(size_t) をペイロードの直前に埋め込むことで、
-//  free / realloc 時にサイズを参照できるようにする。
-//
-//  バンプアロケータは解放を追跡しない。
-//  断片化ゼロだが「空き穴」の再利用はしない。
-//  FFmpeg の使用パターン (open→decode→close の一方向フロー) に最適。
-//  close 後に reset() を呼ぶことでアリーナを一括解放する。
+//  1. サイズが MAX_BIN_SIZE 以下なら対応ビンのフリーリストを探す。
+//     ヒットしたらそのブロックを返す (O(1))。
+//  2. フリーリストが空 or サイズ超過ならバンプ確保する。
+//  3. アリーナ枯渇時のみ ::malloc フォールバック。
 // ------------------------------------------------------------
 void* FFmpegAllocator::ffmpegMalloc(size_t size, void* /*opaque*/) {
-    if (size == 0) return nullptr;
-    size_t need = alignUp(HDR + size);
+    if (size == 0) size = 1;
+
+    // ---- フリーリスト検索 (小サイズのみ) ----
+    if (size <= MAX_BIN_SIZE) {
+        size_t idx = binIdx(size);
+        // idx が N_BINS を超える場合のガード (alignUp後に MAX_BIN_SIZE ちょうどになるケース等)
+        if (idx < N_BINS && freeLists[idx]) {
+            BlockHeader* blk = freeLists[idx];
+            freeLists[idx] = blk->nextFree;
+            blk->nextFree  = nullptr;
+            // ペイロードはゼロクリアしない (FFmpegが自分で初期化する)
+            return reinterpret_cast<uint8_t*>(blk) + HDR;
+        }
+    }
+
+    // ---- バンプ確保 ----
+    // 実際に確保するペイロードサイズは ALIGN に切り上げる
+    size_t payloadAligned = alignUp(size);
+    size_t need = HDR + payloadAligned;
     if (heapPos + need > FFMPEG_HEAP_SIZE) {
-        // アリーナ枯渇 → フォールバックとして libc malloc を使う
-        // (これが起きたら FFMPEG_HEAP_SIZE を増やすこと)
-        LOG_ERROR("FFmpegAllocator", "arena full: need=%zu pos=%zu cap=%zu — falling back to malloc",
+        LOG_ERROR("FFmpegAllocator",
+                  "arena full: need=%zu pos=%zu cap=%zu — falling back to malloc",
                   need, heapPos, FFMPEG_HEAP_SIZE);
         return ::malloc(size);
     }
     uint8_t* block = heap + heapPos;
     heapPos += need;
 
-    auto* hdr = reinterpret_cast<BlockHeader*>(block);
-    hdr->size = size;
+    auto* hdr     = reinterpret_cast<BlockHeader*>(block);
+    hdr->size     = payloadAligned; // 切り上げ後のサイズを保存 (free 時にビン計算で使う)
+    hdr->nextFree = nullptr;
     return block + HDR;
 }
 
 // ------------------------------------------------------------
 //  ffmpegRealloc
 //
-//  バンプアロケータはインプレース拡張できないため、
-//  常に「新規確保 + memcpy + 旧領域放棄」を行う。
-//  旧領域はアリーナ内で「穴」になるが、reset() で一括回収される。
+//  アリーナ内のポインタ: 新規確保 + memcpy + 旧ブロックをフリーリストに戻す。
+//  アリーナ外 (フォールバック malloc 由来): ::realloc に委譲。
 // ------------------------------------------------------------
 void* FFmpegAllocator::ffmpegRealloc(void* ptr, size_t size, void* opaque) {
-    if (!ptr)     return ffmpegMalloc(size, opaque);
+    if (!ptr)      return ffmpegMalloc(size, opaque);
     if (size == 0) { ffmpegFree(ptr, opaque); return nullptr; }
 
-    auto* hdr = reinterpret_cast<BlockHeader*>(static_cast<uint8_t*>(ptr) - HDR);
-
-    // ptr がアリーナ内にあるか確認
-    // アリーナ外 (フォールバック malloc 由来) の場合は realloc に委譲
     uint8_t* p = static_cast<uint8_t*>(ptr);
     if (p < heap || p >= heap + FFMPEG_HEAP_SIZE) {
         return ::realloc(ptr, size);
     }
 
+    auto* hdr = reinterpret_cast<BlockHeader*>(p - HDR);
+    // サイズが同じか小さい場合はそのまま返す (FFmpegではよくある)
+    if (size <= hdr->size) return ptr;
+
     void* newPtr = ffmpegMalloc(size, opaque);
     if (!newPtr) return nullptr;
-    memcpy(newPtr, ptr, std::min(hdr->size, size));
-    // 旧ブロックは放棄 (バンプアロケータは個別 free 不可)
+    memcpy(newPtr, ptr, hdr->size);
+    ffmpegFree(ptr, opaque); // 旧ブロックをフリーリストに返す
     return newPtr;
 }
 
 // ------------------------------------------------------------
 //  ffmpegFree
 //
-//  バンプアロケータは個別解放できない。
-//  アリーナ外 (フォールバック malloc 由来) のポインタは ::free する。
-//  アリーナ内のポインタは reset() まで保持される。
+//  アリーナ内のポインタ:
+//    MAX_BIN_SIZE 以下なら対応ビンのフリーリストに積む。
+//    超過サイズは「穴」として放棄 (reset() で一括回収)。
+//  アリーナ外 (フォールバック malloc 由来): ::free する。
 // ------------------------------------------------------------
 void FFmpegAllocator::ffmpegFree(void* ptr, void* /*opaque*/) {
     if (!ptr) return;
     uint8_t* p = static_cast<uint8_t*>(ptr);
     if (p < heap || p >= heap + FFMPEG_HEAP_SIZE) {
-        // アリーナ外 → フォールバック malloc 由来なので通常 free
         ::free(ptr);
+        return;
     }
-    // アリーナ内 → reset() で一括回収。個別解放はしない。
+
+    auto* hdr = reinterpret_cast<BlockHeader*>(p - HDR);
+    if (hdr->size <= MAX_BIN_SIZE) {
+        size_t idx = binIdx(hdr->size);
+        if (idx < N_BINS) {
+            // フリーリストの先頭に積む (LIFO: キャッシュ効率が良い)
+            hdr->nextFree  = freeLists[idx];
+            freeLists[idx] = hdr;
+            return;
+        }
+    }
+    // 大きなブロックは放棄 (reset() まで穴になる)
 }
 
 // ------------------------------------------------------------
@@ -96,14 +121,7 @@ void FFmpegAllocator::ffmpegFree(void* ptr, void* /*opaque*/) {
 //  FFmpeg の libavutil は av_malloc / av_free を通常シンボルで export する。
 //  同名の関数をこのファイルで定義すると、リンカが「強いシンボル」として
 //  優先し、FFmpeg 内部のアロケーションが全てここに来る。
-//
-//  注意: これはリンク順に依存する。Makefile の LDFLAGS で
-//        -lavformat -lavcodec -lavutil より前にこのオブジェクトが
-//        リンクされる必要がある（通常 .o ファイルは .a より前なので問題ない）。
-//
-//  av_set_mem_handlers が使える FFmpeg バージョン (>= 5.1 相当) なら
-//  そちらの方がクリーンだが、devkitPro の FFmpeg は古いため
-//  シンボル上書き方式を採用する。
+//  Makefile に -Wl,--allow-multiple-definition が必要。
 // ------------------------------------------------------------
 extern "C" {
 
@@ -120,7 +138,6 @@ void av_free(void* ptr) {
 }
 
 void av_freep(void* arg) {
-    // av_freep は void** を受け取り、解放後に *ptr = NULL にする
     void** ptr = static_cast<void**>(arg);
     if (ptr && *ptr) {
         FFmpegAllocator::ffmpegFree(*ptr, nullptr);
@@ -131,29 +148,25 @@ void av_freep(void* arg) {
 } // extern "C"
 
 // ------------------------------------------------------------
-//  install / uninstall
-//
-//  シンボル上書き方式ではフックの動的切り替えは不要。
-//  install() はアリーナの初期化ログ出力のみ行う。
+//  install / uninstall / reset
 // ------------------------------------------------------------
 void FFmpegAllocator::install() {
     if (installed) return;
     installed = true;
-    LOG_INFO("FFmpegAllocator", "installed (symbol override): arena=%zuKB @ %p",
-             FFMPEG_HEAP_SIZE / 1024, (void*)heap);
+    LOG_INFO("FFmpegAllocator",
+             "installed (freelist arena): size=%zuKB bins=%zu maxBin=%zu @ %p",
+             FFMPEG_HEAP_SIZE / 1024, N_BINS, MAX_BIN_SIZE, (void*)heap);
 }
 
 void FFmpegAllocator::uninstall() {
-    // シンボル上書き方式では動的解除不可。アプリ終了まで有効。
     LOG_INFO("FFmpegAllocator", "uninstall: no-op (symbol override method)");
 }
 
-// ------------------------------------------------------------
-//  reset — FFmpeg コンテキストを全て解放した後に呼ぶ
-// ------------------------------------------------------------
 void FFmpegAllocator::reset() {
     LOG_INFO("FFmpegAllocator", "reset: freed %zuKB (pos=%zu)", heapPos / 1024, heapPos);
     heapPos = 0;
+    // フリーリストもクリア (アリーナが先頭に戻るのでどうせ無効になる)
+    for (size_t i = 0; i < N_BINS; i++) freeLists[i] = nullptr;
 }
 
 size_t FFmpegAllocator::usedBytes() { return heapPos; }
@@ -163,9 +176,7 @@ size_t FFmpegAllocator::usedBytes() { return heapPos; }
 // ============================================================
 
 void BgaManager::init(size_t expectedSize) {
-    // FFmpeg アロケータを最初の init() で一度だけ登録する
     FFmpegAllocator::install();
-
     clear();
     textures.reserve(std::min((size_t)256, expectedSize));
 }
@@ -205,7 +216,6 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
 
     if (isVideoMode) clear();
 
-    // --- 動画ファイル候補を順に試す ---
     static const std::vector<std::string> VIDEO_EXTS = {
         ".mp4", ".MP4", ".wmv", ".WMV", ".avi", ".AVI",
         ".mov", ".MOV", ".m4v", ".M4V", ".mpg", ".MPG", ".mpeg", ".MPEG"
@@ -299,9 +309,7 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
 
     const AVCodecDescriptor* desc = avcodec_descriptor_get(pCodecPar->codec_id);
     LOG_INFO("BgaManager", "loadBgaFile: %dx%d %.1ffps codec=%s '%s'",
-             vW, vH, fps,
-             desc ? desc->name : "unknown",
-             path.c_str());
+             vW, vH, fps, desc ? desc->name : "unknown", path.c_str());
 
     const AVCodec* pCodec = avcodec_find_decoder(pCodecPar->codec_id);
     if (!pCodec) {
@@ -311,10 +319,9 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
 
     pCodecCtx = avcodec_alloc_context3(pCodec);
     avcodec_parameters_to_context(pCodecCtx, pCodecPar);
-
-    pCodecCtx->thread_count    = 1;
-    pCodecCtx->flags2         |= AV_CODEC_FLAG2_FAST;
-    pCodecCtx->workaround_bugs = 1;
+    pCodecCtx->thread_count     = 1;
+    pCodecCtx->flags2          |= AV_CODEC_FLAG2_FAST;
+    pCodecCtx->workaround_bugs  = 1;
     pCodecCtx->skip_loop_filter = AVDISCARD_NONREF;
 
     if (avcodec_open2(pCodecCtx, pCodec, NULL) < 0) {
@@ -339,12 +346,8 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
         return false;
     }
 
-    // SPSC スロット事前確保
-    // NV12 = Y(w×h) + UV(w×h/2) = w×h×3/2 バイト
     size_t slotBytes = (size_t)videoTexW * videoTexH * 3 / 2;
     for (int i = 0; i < NUM_SLOTS; i++) {
-        // ★ resize のみ。shrink_to_fit はしない。
-        // 曲間でバッファサイズが同じ (342×256 固定) なら再アロケーションゼロ。
         slots[i].data.resize(slotBytes, 0);
         slots[i].pts = -1.0;
     }
@@ -356,8 +359,7 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
     isReady.store(false, std::memory_order_release);
 
     LOG_INFO("BgaManager", "loadBgaFile: starting decode thread slotBytes=%zuKB x%d arena=%zuKB",
-             slotBytes / 1024, NUM_SLOTS,
-             FFmpegAllocator::usedBytes() / 1024);
+             slotBytes / 1024, NUM_SLOTS, FFmpegAllocator::usedBytes() / 1024);
     decodeThread = std::thread(&BgaManager::videoWorker, this);
     return true;
 }
@@ -414,9 +416,7 @@ void BgaManager::videoWorker() {
 
             tail     = qTail.load(std::memory_order_relaxed);
             nextTail = (tail + 1) % NUM_SLOTS;
-            if (nextTail == qHead.load(std::memory_order_acquire)) {
-                break;
-            }
+            if (nextTail == qHead.load(std::memory_order_acquire)) break;
 
             int64_t pts = pFrame->best_effort_timestamp;
             if (pts == AV_NOPTS_VALUE) pts = 0;
@@ -457,10 +457,10 @@ void BgaManager::videoWorker() {
                 }
             } else {
                 if (pFrame->linesize[1] == w / 2 && pFrame->linesize[2] == w / 2) {
-                    const uint8_t* sU   = pFrame->data[1];
-                    const uint8_t* sV   = pFrame->data[2];
-                    uint16_t*      dUV  = reinterpret_cast<uint16_t*>(dstUV);
-                    const size_t   n    = uvSize / 2;
+                    const uint8_t* sU  = pFrame->data[1];
+                    const uint8_t* sV  = pFrame->data[2];
+                    uint16_t*      dUV = reinterpret_cast<uint16_t*>(dstUV);
+                    const size_t   n   = uvSize / 2;
                     for (size_t j = 0; j < n; j++)
                         dUV[j] = (uint16_t)sU[j] | ((uint16_t)sV[j] << 8);
                 } else {
@@ -515,17 +515,14 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
                      renderW, renderH };
 
     while (currentEventIndex < bgaEvents.size()
-           && bgaEvents[currentEventIndex].y <= currentPulse) {
+           && bgaEvents[currentEventIndex].y <= currentPulse)
         lastDisplayedId = bgaEvents[currentEventIndex++].id;
-    }
     while (currentLayerIndex < layerEvents.size()
-           && layerEvents[currentLayerIndex].y <= currentPulse) {
+           && layerEvents[currentLayerIndex].y <= currentPulse)
         lastLayerId = layerEvents[currentLayerIndex++].id;
-    }
     while (currentPoorIndex < poorEvents.size()
-           && poorEvents[currentPoorIndex].y <= currentPulse) {
+           && poorEvents[currentPoorIndex].y <= currentPulse)
         lastPoorId = poorEvents[currentPoorIndex++].id;
-    }
 
     if (isVideoMode && videoTexture) {
         double currentTime = sharedVideoElapsed.load(std::memory_order_acquire);
@@ -545,8 +542,8 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
         }
 
         if (bestIdx >= 0) {
-            const uint8_t* src    = slots[bestIdx].data.data();
-            const size_t   yBytes = (size_t)videoTexW * videoTexH;
+            const uint8_t* src     = slots[bestIdx].data.data();
+            const size_t   yBytes  = (size_t)videoTexW * videoTexH;
             const size_t   uvBytes = yBytes / 2;
 
             void* pixels; int pitch;
@@ -566,7 +563,6 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
                 }
                 SDL_UnlockTexture(videoTexture);
             }
-
             qHead.store((bestIdx + 1) % NUM_SLOTS, std::memory_order_release);
         }
 
@@ -607,20 +603,16 @@ void BgaManager::clear() {
     if (videoTexture) { SDL_DestroyTexture(videoTexture); videoTexture = nullptr; }
     videoTexW = 0; videoTexH = 0;
 
-    // ③ FFmpeg コンテキスト解放
+    // ③ FFmpeg コンテキスト解放 (この後に reset() を呼ぶこと)
     if (pFrame)     { av_frame_free(&pFrame);            pFrame     = nullptr; }
     if (pCodecCtx)  { avcodec_free_context(&pCodecCtx); pCodecCtx  = nullptr; }
     if (pFormatCtx) { avformat_close_input(&pFormatCtx); pFormatCtx = nullptr; }
 
     // ④ FFmpeg アリーナをリセット
-    // ★ FFmpeg コンテキストを全て解放した後 (③の後) に呼ぶこと。
-    //    これにより曲間で蓄積した FFmpeg の断片化メモリを一括回収する。
+    // ★ ③の後に呼ぶこと。フリーリストも含めて一括クリアする。
     FFmpegAllocator::reset();
 
     // ⑤ SPSC スロット: pts のみリセット。data バッファは解放しない。
-    // ★ shrink_to_fit() を廃止。
-    //    バッファを保持し続けることで次曲の resize が再アロケーションなしで済む。
-    //    (342×256 固定解像度なら毎曲サイズが同じなので realloc ゼロ)
     for (int i = 0; i < NUM_SLOTS; i++) {
         std::fill(slots[i].data.begin(), slots[i].data.end(), (uint8_t)0);
         slots[i].pts = -1.0;

@@ -30,106 +30,116 @@ struct BgaEvent {
 //  【旧実装の問題点と修正内容】
 //
 //  問題①: mutex + std::deque がホットパス上にある
-//    → render()とvideoWorker()が毎フレームmutexを奪い合い、
-//      OSスケジューラが両スレッドを止めてジッターが発生する。
-//  修正: SPSC (Single-Producer Single-Consumer) ロックフリーキュー に置き換え。
-//       mutex を完全に廃止。atomic<int> の head/tail のみで同期する。
+//    修正: SPSC ロックフリーキューに置き換え。
 //
 //  問題②: pCodecCtx->thread_count = 2
-//    → FFmpeg が内部に2つの pthread を立てる。
-//      外側の videoWorker + 内部2スレッド = 計3スレッドが
-//      Switch の4コア(コア0=システム予約)を侵食し、
-//      ゲームメインスレッドとコアを奪い合う。
-//  修正: thread_count = 1 にしてFFmpeg内部スレッドを無効化。
-//       videoWorker スレッドをコア2に固定する (#ifdef __SWITCH__)。
+//    修正: thread_count = 1、videoWorker をコア2に固定。
 //
 //  問題③: MAX_FRAME_QUEUE = 60
-//    → 60フレーム分デコードしようとCPUを使い続ける。
-//      256×H の小さい動画なら NUM_SLOTS = 6 で十分。
-//  修正: NUM_SLOTS = 6 (約0.2秒分のバッファ @ 30fps)
+//    修正: NUM_SLOTS = 6 (約0.2秒分のバッファ @ 30fps)
 //
 //  問題④: render() での行ごと memcpy
-//    → ストライドが width と一致する場合に2回の単一 memcpy で済む。
-//  修正: pitch == videoTexW の場合は Y/UV を各1回の memcpy で処理。
+//    修正: pitch == videoTexW の場合は Y/UV を各1回の memcpy で処理。
 //
 //  問題⑤: FFmpeg が libc malloc を使うことによるヒープ断片化
-//    → avformat_open_input / avcodec_open2 などが曲をまたぐたびに
-//      libc malloc/free を繰り返し、Switch の malloc アリーナが断片化する。
+//    → avformat_open_input / avcodec_open2 が曲をまたぐたびに
+//      libc malloc/free を繰り返し、Switch の malloc アリーナが断片化。
 //      最終的に SDL_Mixer の Mix_LoadWAV_RW が "Out of memory" で失敗する。
-//  修正: FFmpegAllocator (固定アリーナ) に av_malloc フックを向けることで
-//       FFmpeg のアロケーションをメインヒープから完全に切り離す。
-//       アリーナは BgaManager の初回使用時に一度だけ確保し、
-//       曲をまたいでも解放しない。
+//    修正: FFmpegAllocator (フリーリスト付き固定アリーナ) に
+//          av_malloc シンボルを差し替えて FFmpeg をメインヒープから切り離す。
 //
 //  【動画制約】
 //    height <= 256px, fps <= 30fps の動画のみ受け付ける。
-//    これを超える動画は loadBgaFile() が false を返して拒否する。
 // ============================================================
 
 // ============================================================
-//  FFmpegAllocator — 固定アリーナアロケータ
+//  FFmpegAllocator — フリーリスト付き固定アリーナアロケータ
 //
-//  FFmpeg の av_malloc / av_realloc / av_free を横取りして
-//  このアリーナ内でだけ確保・解放させる。
-//  メインヒープ (libc malloc) には一切触れないため断片化しない。
+//  【設計方針】
+//  FFmpeg の確保パターンは2種類ある:
+//    (A) 初期化バッファ: avformat_open_input / avcodec_open2 時に確保し
+//        avformat_close_input / avcodec_free_context で解放。長寿命。
+//    (B) フレーム処理バッファ: AVPacket / 内部作業バッファ。
+//        毎フレーム確保→解放を繰り返す。短寿命・小サイズ。
 //
-//  アリーナサイズ: FFMPEG_HEAP_SIZE (デフォルト 10MB)
-//    内訳イメージ:
-//      avformat_open_input  内部バッファ  ~512KB
-//      avcodec_open2        H.264内部     ~1MB
-//      av_frame_alloc       参照フレーム  ~256KB
-//      videoWorker av_packet ~数十KB
-//      余裕バッファ                       ~残り
-//    10MB あれば 342×256/30fps の H.264 動画で余裕がある。
-//    もし足りなければ FFMPEG_HEAP_SIZE を増やすこと。
+//  バンプアロケータは (A) には有効だが (B) で枯渇する。
+//  → フリーリストを追加して解放済みブロックを再利用する。
+//
+//  【フリーリスト戦略】
+//  サイズクラスを N_BINS 段に分けてそれぞれ単方向リストで管理する。
+//  確保要求はサイズを切り上げて対応クラスのリストから取り出す。
+//  リストが空なら新規バンプ確保する。
+//  アリーナ全体のリセットは reset() で O(1)。
+//
+//  MAX_BIN_SIZE を超えるサイズはそのまま新規バンプ確保し、
+//  free されても再利用せずに「穴」として残す
+//  (大きなブロックは頻繁に確保・解放されないため問題ない)。
+//
+//  【アライメント】
+//  FFmpeg の av_malloc は AV_INPUT_BUFFER_PADDING_SIZE (32バイト) の
+//  アライメントを保証する。これを満たさないと AArch64 NEON が
+//  スカラーフォールバックに落ちて fps が激減する。
+//  ブロックヘッダも 32 バイト固定にすることで
+//  ペイロード先頭が常に 32 バイト境界に来る。
 // ============================================================
 class FFmpegAllocator {
 public:
-    // アリーナサイズ (バイト)。必要に応じて増やす。
-    static constexpr size_t FFMPEG_HEAP_SIZE = 10 * 1024 * 1024; // 10MB
+    // アリーナサイズ。
+    // 初期化バッファ (~3MB) + フレームバッファ循環分 + 余裕
+    static constexpr size_t FFMPEG_HEAP_SIZE = 16 * 1024 * 1024; // 16MB
 
-    // av_malloc フックの登録・解除
-    // BgaManager の最初のインスタンス生成時に一度だけ呼ぶ。
-    static void install();
-    static void uninstall();
-
-    // アリーナの現在の使用量をバイト単位で返す (デバッグ用)
+    static void   install();
+    static void   uninstall();
     static size_t usedBytes();
 
-    // アリーナを完全リセットする。
-    // ★ FFmpeg のコンテキストを全て解放した後にのみ呼ぶこと。
-    //    解放前にリセットするとダングリングポインタになる。
+    // FFmpeg コンテキストを全て解放した後に呼ぶ。
+    // アリーナポインタを先頭に戻し、フリーリストもクリアする。
     static void reset();
 
-    // av_malloc / av_free シンボル上書き関数から呼ばれる。
-    // extern "C" リンケージから参照するため public にする。
+    // av_malloc / av_free シンボル上書きから呼ばれる (public 必須)
     static void* ffmpegMalloc(size_t size, void* opaque);
     static void* ffmpegRealloc(void* ptr, size_t size, void* opaque);
     static void  ffmpegFree(void* ptr, void* opaque);
 
 private:
+    // ---- アライメント定数 ----
+    static constexpr size_t ALIGN = 32; // FFmpeg NEON 要件
+    static size_t alignUp(size_t n) { return (n + ALIGN - 1) & ~(ALIGN - 1); }
+
+    // ---- ブロックヘッダ (32バイト固定) ----
+    // ペイロード直前に埋め込む。32バイト固定にすることで
+    // ペイロード先頭が常に ALIGN 境界に来る。
+    struct BlockHeader {
+        size_t       size;      // ペイロードバイト数
+        BlockHeader* nextFree;  // フリーリストの次ノード (使用中は nullptr)
+        uint8_t      _pad[32 - sizeof(size_t) - sizeof(BlockHeader*)];
+    };
+    static_assert(sizeof(BlockHeader) == 32, "BlockHeader must be 32 bytes");
+    static constexpr size_t HDR = sizeof(BlockHeader); // = 32
+
+    // ---- フリーリスト ----
+    // サイズクラス: 32バイト刻み、MAX_BIN_SIZE まで
+    // binIdx(size): ペイロードサイズ size に対応するビンインデックス
+    //   size=1..32 → 0, 33..64 → 1, 65..96 → 2, ...
+    static constexpr size_t BIN_STEP     = 32;
+    static constexpr size_t MAX_BIN_SIZE = 4096; // これ以下のサイズをフリーリスト管理
+    static constexpr size_t N_BINS       = MAX_BIN_SIZE / BIN_STEP; // = 128
+
+    static size_t binIdx(size_t size) {
+        size_t s = alignUp(size == 0 ? 1 : size);
+        return s / BIN_STEP - 1;
+    }
+
+    static BlockHeader* freeLists[N_BINS]; // 各ビンの先頭 (nullptr = 空)
 
     // ---- アリーナ本体 ----
-    // alignas(16): SIMD 命令が要求するアライメントを満たす
-    alignas(16) static uint8_t  heap[FFMPEG_HEAP_SIZE];
-    static size_t               heapPos;   // 次の空き先頭オフセット
-    static bool                 installed; // フック登録済みフラグ
-
-    // ---- ブロックヘッダ ----
-    // アリーナ内の各アロケーションの先頭に埋め込み、
-    // realloc / free でサイズを参照できるようにする。
-    struct BlockHeader {
-        size_t size; // ペイロードのバイト数 (ヘッダを含まない)
-    };
-    static constexpr size_t HDR = sizeof(BlockHeader);
-    // アライメント単位: 16バイト境界に揃える
-    static constexpr size_t ALIGN = 16;
-    static size_t alignUp(size_t n) { return (n + ALIGN - 1) & ~(ALIGN - 1); }
+    alignas(32) static uint8_t heap[FFMPEG_HEAP_SIZE];
+    static size_t              heapPos;
+    static bool                installed;
 };
 
 class BgaManager {
 public:
-    // 動画制約 (Switch の処理能力上限)
     static constexpr int MAX_VIDEO_HEIGHT = 256;
     static constexpr int MAX_VIDEO_FPS    = 30;
 
@@ -141,7 +151,6 @@ public:
     void registerPath(int id, const std::string& filename) { idToFilename[id] = filename; }
     void loadBmp(int id, const std::string& fullPath, SDL_Renderer* renderer);
 
-    // 動画を開く。height>256 または fps>30 の動画は拒否して false を返す。
     bool loadBgaFile(const std::string& path, SDL_Renderer* renderer);
 
     void preLoad(long long startPulse, SDL_Renderer* renderer);
@@ -154,19 +163,13 @@ public:
     void clear();
     void cleanup();
 
-    // NoteRenderer がレイアウトを確定した後に呼ぶ。
-    // BgaManager はレーン幅を自分で計算せず、ここで受け取った値のみを使う。
-    void setLayout(int bgaCenterX) {
-        cachedBgaCenterX = bgaCenterX;
-    }
+    void setLayout(int bgaCenterX) { cachedBgaCenterX = bgaCenterX; }
 
 private:
     void videoWorker();
 
-    // NoteRenderer から受け取ったレイアウトキャッシュ
     int cachedBgaCenterX = 640;
 
-    // BMP/PNG テクスチャエントリ
     struct BgaTextureEntry {
         SDL_Texture* tex = nullptr;
         int w = 0;
@@ -182,46 +185,32 @@ private:
     int    lastDisplayedId   = -1, lastLayerId = -1, lastPoorId = -1;
     bool   showPoor          = false;
 
-    // 動画状態
     bool               isVideoMode = false;
-    std::atomic<bool>  isReady{false};   // worker が最初の1フレームを書いた後 true になる
+    std::atomic<bool>  isReady{false};
     SDL_Texture*       videoTexture = nullptr;
     int                videoTexW    = 0;
     int                videoTexH    = 0;
     double             videoFps     = 30.0;
 
-    // FFmpeg コンテキスト
     AVFormatContext* pFormatCtx     = nullptr;
     AVCodecContext*  pCodecCtx      = nullptr;
     AVFrame*         pFrame         = nullptr;
     int              videoStreamIdx = -1;
 
-    // デコードスレッド
     std::thread         decodeThread;
     std::atomic<bool>   quitThread{false};
     std::atomic<double> sharedVideoElapsed{0.0};
 
-    // ============================================================
-    //  SPSC ロックフリーリングバッファ
-    //
-    //  Producer (videoWorker): qTail のみ書く、qHead のみ読む
-    //  Consumer (render):      qHead のみ書く、qTail のみ読む
-    //  → mutex 不要、キャッシュライン競合も最小
-    //
-    //  NUM_SLOTS = 6: 30fps なら約200ms 分のバッファ
-    //  各スロット: NV12 タイトパッキング (stride = width)
-    //             サイズ = width × height × 3/2
-    // ============================================================
     static constexpr int NUM_SLOTS = 6;
 
     struct FrameSlot {
-        std::vector<uint8_t> data; // NV12 (Y plane + UV plane 連続)
+        std::vector<uint8_t> data;
         double               pts = -1.0;
     };
 
     FrameSlot          slots[NUM_SLOTS];
-    std::atomic<int>   qHead{0};  // Consumer (render)  が次に読む位置
-    std::atomic<int>   qTail{0};  // Producer (worker)  が次に書く位置
+    std::atomic<int>   qHead{0};
+    std::atomic<int>   qTail{0};
 };
 
 #endif // BGAMANAGER_HPP
