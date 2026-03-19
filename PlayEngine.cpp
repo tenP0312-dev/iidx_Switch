@@ -454,6 +454,10 @@ void PlayEngine::init(BMSData& data) {
     //          notes は target_ms 昇順にソート済みなので、各レーン内でも昇順が保たれる。
     for (int lane = 1; lane <= 8; ++lane) {
         laneNoteIndices[lane].clear();
+        // ★修正(MINOR-2): レーン別インデックスを事前確保。
+        // 8レーンに均等分散と仮定し、ノーツ総数/7 + 余裕分を確保する。
+        // push_back 時の再アロケーション（と memcpy）を防ぐ。
+        laneNoteIndices[lane].reserve(notes.size() / 7 + 16);
         laneSearchStart[lane] = 0;
         laneHiddenNotes[lane].clear();
         hiddenSearchStart[lane] = 0;
@@ -979,3 +983,5 @@ void PlayEngine::forceFail() {
     status.gauge     = 0.0;
     status.clearType = ClearType::FAILED;
 }
+
+

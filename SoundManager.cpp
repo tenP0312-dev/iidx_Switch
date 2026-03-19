@@ -449,7 +449,6 @@ void SoundManager::play(int soundId) {
 
         if (newChannel != -1) {
             Mix_Volume(newChannel, 96);
-            activeChannels[id] = newChannel;
         }
     } else {
         LOG_WARN("SoundManager", "play: soundId=%u not in sounds (not loaded?)", id);
@@ -486,7 +485,6 @@ void SoundManager::stopPreview() {
 
 void SoundManager::stopAll() {
     Mix_HaltChannel(-1);
-    activeChannels.clear();
     stopPreview();
 }
 
@@ -499,7 +497,6 @@ void SoundManager::clear() {
         if (pair.second) Mix_FreeChunk(pair.second);
     }
     std::unordered_map<uint32_t, Mix_Chunk*>().swap(sounds);
-    std::unordered_map<uint32_t, int>().swap(activeChannels);
 
     boxIndex.clear();
     currentTotalMemory = 0;
@@ -520,6 +517,8 @@ void SoundManager::cleanup() {
     clear();
     Mix_CloseAudio();
 }
+
+
 
 
 

@@ -167,7 +167,7 @@ std::string Scene2PDiffSelect::run(SDL_Renderer* ren, NoteRenderer& renderer,
             const DiffEntry& d1 = diffs[p1Idx];
             renderer.drawTextCached(ren, d1.title,  CX_1P, 170, white, false, true);
             renderer.drawTextCached(ren, d1.artist, CX_1P, 215, gray,  false, true);
-            char buf[128];
+            char buf[TEXT_BUF_SIZE];
             snprintf(buf, sizeof(buf), "[%s]  LEVEL %d", d1.chartName.c_str(), d1.level);
             renderer.drawTextCached(ren, buf, CX_1P, 255, yellow, false, true);
         }
@@ -178,7 +178,7 @@ std::string Scene2PDiffSelect::run(SDL_Renderer* ren, NoteRenderer& renderer,
             int lineH = 30;
             for (int i = 0; i < (int)diffs.size(); ++i) {
                 const DiffEntry& d = diffs[i];
-                char buf[64];
+                char buf[TEXT_BUF_SIZE];
                 snprintf(buf, sizeof(buf), "[%s] LV.%d", d.chartName.c_str(), d.level);
                 SDL_Color col = (i == p1Idx) ? cyan : gray;
                 renderer.drawTextCached(ren, buf, CX_1P, listY + i * lineH, col, false, true);
@@ -191,7 +191,7 @@ std::string Scene2PDiffSelect::run(SDL_Renderer* ren, NoteRenderer& renderer,
             const DiffEntry& d2 = diffs[p2Idx];
             renderer.drawTextCached(ren, d2.title,  CX_2P, 170, white, false, true);
             renderer.drawTextCached(ren, d2.artist, CX_2P, 215, gray,  false, true);
-            char buf[128];
+            char buf[TEXT_BUF_SIZE];
             snprintf(buf, sizeof(buf), "[%s]  LEVEL %d", d2.chartName.c_str(), d2.level);
             renderer.drawTextCached(ren, buf, CX_2P, 255, yellow, false, true);
         }
@@ -202,7 +202,7 @@ std::string Scene2PDiffSelect::run(SDL_Renderer* ren, NoteRenderer& renderer,
             int lineH = 30;
             for (int i = 0; i < (int)diffs.size(); ++i) {
                 const DiffEntry& d = diffs[i];
-                char buf[64];
+                char buf[TEXT_BUF_SIZE];
                 snprintf(buf, sizeof(buf), "[%s] LV.%d", d.chartName.c_str(), d.level);
                 SDL_Color col = (i == p2Idx) ? green : gray;
                 renderer.drawTextCached(ren, buf, CX_2P, listY + i * lineH, col, false, true);
@@ -250,4 +250,6 @@ std::string Scene2PDiffSelect::run(SDL_Renderer* ren, NoteRenderer& renderer,
     // ここには到達しないが念のため
     return diffs.empty() ? "" : diffs[p2Idx].path;
 }
+
+
 

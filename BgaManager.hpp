@@ -52,10 +52,81 @@ struct BgaEvent {
 //    → ストライドが width と一致する場合に2回の単一 memcpy で済む。
 //  修正: pitch == videoTexW の場合は Y/UV を各1回の memcpy で処理。
 //
+//  問題⑤: FFmpeg が libc malloc を使うことによるヒープ断片化
+//    → avformat_open_input / avcodec_open2 などが曲をまたぐたびに
+//      libc malloc/free を繰り返し、Switch の malloc アリーナが断片化する。
+//      最終的に SDL_Mixer の Mix_LoadWAV_RW が "Out of memory" で失敗する。
+//  修正: FFmpegAllocator (固定アリーナ) に av_malloc フックを向けることで
+//       FFmpeg のアロケーションをメインヒープから完全に切り離す。
+//       アリーナは BgaManager の初回使用時に一度だけ確保し、
+//       曲をまたいでも解放しない。
+//
 //  【動画制約】
 //    height <= 256px, fps <= 30fps の動画のみ受け付ける。
 //    これを超える動画は loadBgaFile() が false を返して拒否する。
 // ============================================================
+
+// ============================================================
+//  FFmpegAllocator — 固定アリーナアロケータ
+//
+//  FFmpeg の av_malloc / av_realloc / av_free を横取りして
+//  このアリーナ内でだけ確保・解放させる。
+//  メインヒープ (libc malloc) には一切触れないため断片化しない。
+//
+//  アリーナサイズ: FFMPEG_HEAP_SIZE (デフォルト 10MB)
+//    内訳イメージ:
+//      avformat_open_input  内部バッファ  ~512KB
+//      avcodec_open2        H.264内部     ~1MB
+//      av_frame_alloc       参照フレーム  ~256KB
+//      videoWorker av_packet ~数十KB
+//      余裕バッファ                       ~残り
+//    10MB あれば 342×256/30fps の H.264 動画で余裕がある。
+//    もし足りなければ FFMPEG_HEAP_SIZE を増やすこと。
+// ============================================================
+class FFmpegAllocator {
+public:
+    // アリーナサイズ (バイト)。必要に応じて増やす。
+    static constexpr size_t FFMPEG_HEAP_SIZE = 10 * 1024 * 1024; // 10MB
+
+    // av_malloc フックの登録・解除
+    // BgaManager の最初のインスタンス生成時に一度だけ呼ぶ。
+    static void install();
+    static void uninstall();
+
+    // アリーナの現在の使用量をバイト単位で返す (デバッグ用)
+    static size_t usedBytes();
+
+    // アリーナを完全リセットする。
+    // ★ FFmpeg のコンテキストを全て解放した後にのみ呼ぶこと。
+    //    解放前にリセットするとダングリングポインタになる。
+    static void reset();
+
+    // av_malloc / av_free シンボル上書き関数から呼ばれる。
+    // extern "C" リンケージから参照するため public にする。
+    static void* ffmpegMalloc(size_t size, void* opaque);
+    static void* ffmpegRealloc(void* ptr, size_t size, void* opaque);
+    static void  ffmpegFree(void* ptr, void* opaque);
+
+private:
+
+    // ---- アリーナ本体 ----
+    // alignas(16): SIMD 命令が要求するアライメントを満たす
+    alignas(16) static uint8_t  heap[FFMPEG_HEAP_SIZE];
+    static size_t               heapPos;   // 次の空き先頭オフセット
+    static bool                 installed; // フック登録済みフラグ
+
+    // ---- ブロックヘッダ ----
+    // アリーナ内の各アロケーションの先頭に埋め込み、
+    // realloc / free でサイズを参照できるようにする。
+    struct BlockHeader {
+        size_t size; // ペイロードのバイト数 (ヘッダを含まない)
+    };
+    static constexpr size_t HDR = sizeof(BlockHeader);
+    // アライメント単位: 16バイト境界に揃える
+    static constexpr size_t ALIGN = 16;
+    static size_t alignUp(size_t n) { return (n + ALIGN - 1) & ~(ALIGN - 1); }
+};
+
 class BgaManager {
 public:
     // 動画制約 (Switch の処理能力上限)
@@ -154,4 +225,3 @@ private:
 };
 
 #endif // BGAMANAGER_HPP
-

@@ -52,6 +52,7 @@ else
                    -I$(PORTLIBS)/include -I$(LIBNX)/include -I$(PORTLIBS)/include/SDL2
     SW_LDFLAGS  := -specs=$(LIBNX)/switch.specs -march=armv8-a -mtune=cortex-a57 -fPIE \
                    -L$(PORTLIBS)/lib -L$(LIBNX)/lib \
+                   -Wl,--allow-multiple-definition \
                    -Wl,--start-group \
                    -lavformat -lavcodec -lswscale -lswresample -lavutil -ldav1d \
                    -lSDL2 -lSDL2_image -lSDL2_mixer -lSDL2_ttf \

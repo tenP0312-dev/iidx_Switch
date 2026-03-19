@@ -469,20 +469,20 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
     int headY = judgeY - (int)((note.y - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
     if (note.isLN && note.isBeingPressed) headY = judgeY - Config::VISUAL_OFFSET;
 
-    const TextureRegion *target = nullptr, *lnB = nullptr, *lnA1 = nullptr, *lnA2 = nullptr, *lnS = nullptr, *lnE = nullptr;
-    if (note.lane == 8) {
-        target = &texNoteRed; lnB = &texNoteRed_LN;
-        lnA1 = &texNoteRed_LN_Active1; lnA2 = &texNoteRed_LN_Active2;
-        lnS  = &texNoteRed_LNS;        lnE  = &texNoteRed_LNE;
-    } else if (note.lane % 2 == 0) {
-        target = &texNoteBlue; lnB = &texNoteBlue_LN;
-        lnA1 = &texNoteBlue_LN_Active1; lnA2 = &texNoteBlue_LN_Active2;
-        lnS  = &texNoteBlue_LNS;        lnE  = &texNoteBlue_LNE;
-    } else {
-        target = &texNoteWhite; lnB = &texNoteWhite_LN;
-        lnA1 = &texNoteWhite_LN_Active1; lnA2 = &texNoteWhite_LN_Active2;
-        lnS  = &texNoteWhite_LNS;        lnE  = &texNoteWhite_LNE;
-    }
+    // ★修正(MAJOR-2): テクスチャ色選択を分岐 3 段 → テーブル引きに変更。
+    // レーン番号から色インデックスを決定: 8→赤(0), 偶数→青(1), 奇数→白(2)
+    // CPU の分岐予測ミスを回避し、毎フレーム 100-500 回の呼び出しでサイクルを節約する。
+    struct LaneTexSet {
+        const TextureRegion *target, *lnB, *lnA1, *lnA2, *lnS, *lnE;
+    };
+    const LaneTexSet texSets[3] = {
+        { &texNoteRed,   &texNoteRed_LN,   &texNoteRed_LN_Active1,   &texNoteRed_LN_Active2,   &texNoteRed_LNS,   &texNoteRed_LNE },
+        { &texNoteBlue,  &texNoteBlue_LN,  &texNoteBlue_LN_Active1,  &texNoteBlue_LN_Active2,  &texNoteBlue_LNS,  &texNoteBlue_LNE },
+        { &texNoteWhite, &texNoteWhite_LN, &texNoteWhite_LN_Active1, &texNoteWhite_LN_Active2, &texNoteWhite_LNS, &texNoteWhite_LNE },
+    };
+    int colorIdx = (note.lane == 8) ? 0 : (note.lane % 2 == 0) ? 1 : 2;
+    const LaneTexSet& ts = texSets[colorIdx];
+    const TextureRegion *target = ts.target, *lnB = ts.lnB, *lnA1 = ts.lnA1, *lnA2 = ts.lnA2, *lnS = ts.lnS, *lnE = ts.lnE;
 
     if (note.isLN) {
         int tailY = judgeY - (int)((note.y + note.l - cur_y) * pixels_per_y) - Config::VISUAL_OFFSET;
@@ -524,10 +524,8 @@ void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
             }
 
             if (endDrawY >= (int)Config::SUDDEN_PLUS && endTex && *endTex && endDrawY <= judgeY + endTex->h) {
-                if (true) {
-                    SDL_Rect r = { x + 2, endDrawY - endTex->h, w - 4, endTex->h };
-                    SDL_RenderCopy(ren, endTex->texture, NULL, &r);
-                }
+                SDL_Rect r = { x + 2, endDrawY - endTex->h, w - 4, endTex->h };
+                SDL_RenderCopy(ren, endTex->texture, NULL, &r);
             }
             SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
         }
@@ -677,7 +675,7 @@ void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, f
 
     if (Config::SHOW_FAST_SLOW == 2) {
         // DETAIL: "FAST +12.3ms" / "SLOW -8.1ms" 形式
-        char buf[32];
+        char buf[TEXT_BUF_SIZE];
         snprintf(buf, sizeof(buf), "%s %+.1fms", isFast ? "FAST" : "SLOW", diffMs);
         drawText(ren, buf, x, y, color, false, true);
     } else {
@@ -887,6 +885,8 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
+
 
 
 

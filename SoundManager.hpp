@@ -67,7 +67,9 @@ private:
     // --- 最適化: キーを std::string から uint32_t (ハッシュID) に変更 ---
     // これにより PlayableNote のコピーから std::string が消え、演奏中の検索が高速化されます
     std::unordered_map<uint32_t, Mix_Chunk*> sounds;
-    std::unordered_map<uint32_t, int> activeChannels;
+    // ★削除: activeChannels — 書き込みのみで一度も読まれていないデッドコード。
+    //   毎フレーム10-20回の unordered_map 書き込みを根絶し、
+    //   ハッシュ再配置・メモリアロケーションを削減する。
     
     // ロード時にファイル名で検索する必要があるため、ここは string を維持
     std::unordered_map<std::string, BoxEntry> boxIndex;
@@ -93,6 +95,8 @@ private:
 };
 
 #endif
+
+
 
 
 

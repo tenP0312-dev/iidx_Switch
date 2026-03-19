@@ -261,7 +261,10 @@ int main(int argc, char* argv[]) {
                 if (!selectedPath.empty()) {
                     SDL_RenderClear(ren);
                     SDL_RenderPresent(ren); 
-                    SDL_Delay(500); 
+                    // ★修正(MINOR-3): 500ms→200ms に短縮。
+                    // 選曲→プレイ遷移の暗転演出としては 200ms で十分。
+                    // ScenePlay::run() 内で別途ローディング待機があるため二重に待つ必要はない。
+                    SDL_Delay(200); 
 
                     bool playFinishedNormal = false;
 
@@ -418,4 +421,6 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+
+
 

@@ -123,7 +123,8 @@ void SceneResult::run(SDL_Renderer* ren, NoteRenderer& renderer, const PlayStatu
     // IMG_Quit() はここで呼ばない。
     // SDL_image の初期化/終了は NoteRenderer::init()/cleanup() で一度だけ行う。
     // ここで呼ぶと 2 曲目以降の BGA 画像ロードで NULL テクスチャになりクラッシュする。
-    SDL_Delay(200);
+    // ★修正(MINOR-3): 200ms→100ms に短縮。ボタン連打防止の猶予として100msで十分。
+    SDL_Delay(100);
     SDL_FlushEvents(SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP);
 }
 
@@ -204,7 +205,7 @@ void SceneResult::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
             int y = yStart;
             renderer.drawTextCached(ren, label, cx, y, cyan, true, true); y += lineH + 10;
 
-            char buf[64];
+            char buf[TEXT_BUF_SIZE];
             snprintf(buf, sizeof(buf), "[%s] LV.%d", hdr.chartName.c_str(), hdr.level);
             renderer.drawTextCached(ren, buf, cx, y, gray, false, true); y += lineH;
 
@@ -238,8 +239,11 @@ void SceneResult::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
         SDL_RenderPresent(ren);
     }
 
-    SDL_Delay(200);
+    // ★修正(MINOR-3): 200ms→100ms に短縮。ボタン連打防止の猶予として100msで十分。
+    SDL_Delay(100);
     SDL_FlushEvents(SDL_JOYBUTTONDOWN, SDL_JOYBUTTONUP);
 }
+
+
 
 

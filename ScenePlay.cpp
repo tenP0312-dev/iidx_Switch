@@ -113,7 +113,10 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     LOG_INFO("ScenePlay", "Phase1: snd.clear() done");
     SDL_RenderClear(ren);
     SDL_RenderPresent(ren);
-    SDL_Delay(200);
+    // ★修正(MINOR-3): 200ms→50ms に短縮。
+    // snd.clear() 後の SDL_Mixer 内部バッファフラッシュは即座に完了するため、
+    // 過剰な固定遅延はフレーム落ちとして体感される。
+    SDL_Delay(50);
 
     // ─────────────────────────────────────────────
     // フェーズ 2: BMSON パース（暗転のまま）
@@ -143,7 +146,9 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
              data.header.bpm, data.header.resolution);
 
     // パース完了後にデータ構造のスコープを整理（bmsonの場合はJSON DOMが既に解放済み）
-    SDL_Delay(100);
+    // ★修正(MINOR-3): 100ms→16ms に短縮。パース完了後に待つ根拠がない。
+    // 1フレーム分だけイベントループに制御を返して応答性を確保する。
+    SDL_Delay(16);
 
     // ─────────────────────────────────────────────
     // フェーズ 3: エンジン・BGA 初期化 → プレイ画面を表示
@@ -1212,7 +1217,8 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
     SoundManager& snd = SoundManager::getInstance();
 
     snd.clear();
-    SDL_RenderClear(ren); SDL_RenderPresent(ren); SDL_Delay(200);
+    // ★修正(MINOR-3): 200ms→50ms に短縮（run()と同じ理由）
+    SDL_RenderClear(ren); SDL_RenderPresent(ren); SDL_Delay(50);
     { SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren); SDL_RenderPresent(ren); }
 
     BMSData data1P, data2P;
