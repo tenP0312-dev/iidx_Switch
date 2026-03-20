@@ -12,37 +12,37 @@
 // Config の値は init() 後に変化しないため、ここで一度だけ計算する。
 // 描画ループ内での getXForLane / getWidthForLane の都度計算を排除する。
 void NoteRenderer::rebuildLaneLayout() {
-    // 各レーン幅
+    // レーン幅 (Config.hpp の定数で一元管理)
+    // lane 1=白, 2=黒, 3=白, 4=黒, 5=白, 6=黒, 7=白, 8=スクラッチ (偶数=黒鍵)
     for (int i = 1; i <= 7; i++)
-        ll.w[i] = (i % 2 != 0) ? (int)(Config::LANE_WIDTH * 1.4) : Config::LANE_WIDTH;
-    ll.w[8] = Config::SCRATCH_WIDTH;
+        ll.w[i] = (i % 2 == 0) ? Config::AC_KEY_BLACK : Config::AC_KEY_WHITE;
+    ll.w[8] = Config::AC_SCRATCH;
 
     int keysWidth = 0;
     for (int i = 1; i <= 7; i++) keysWidth += ll.w[i];
-    ll.totalWidth = keysWidth + Config::SCRATCH_WIDTH;
+    ll.totalWidth = keysWidth + ll.w[8];
 
-    ll.baseX = (Config::PLAY_SIDE == 1)
-        ? 50
-        : (Config::SCREEN_WIDTH - ll.totalWidth - 50);
-
-    // 各レーン X 座標
+    // 1P: スクラッチ左端。2P: 1Pの鏡像 (スクラッチ右端)
     if (Config::PLAY_SIDE == 1) {
-        ll.x[8] = ll.baseX;                     // スクラッチ左端
-        int cur = ll.baseX + Config::SCRATCH_WIDTH;
+        ll.baseX   = Config::LANE_BASE_X_1P;
+        ll.x[8]    = ll.baseX;                  // スクラッチ左端
+        int cur    = ll.baseX + ll.w[8];
         for (int i = 1; i <= 7; i++) { ll.x[i] = cur; cur += ll.w[i]; }
     } else {
-        int cur = ll.baseX;
+        // 2P: 画面右側に鏡像配置 (baseXは鍵盤の左端)
+        ll.baseX   = Config::SCREEN_WIDTH - Config::LANE_BASE_X_1P - ll.totalWidth;
+        int cur    = ll.baseX;
         for (int i = 1; i <= 7; i++) { ll.x[i] = cur; cur += ll.w[i]; }
-        ll.x[8] = cur;                           // スクラッチ右端
+        ll.x[8]    = cur;                        // スクラッチ右端
     }
 
-    // BGA 表示中心 X
-    if (Config::PLAY_SIDE == 1) {
-        int right = ll.baseX + ll.totalWidth;
-        ll.bgaCenterX = right + (Config::SCREEN_WIDTH - right) / 2;
-    } else {
-        ll.bgaCenterX = ll.baseX / 2;
-    }
+    // BGA中心X (Config.hpp の定数で位置固定)
+    // BGA/UIテキストの中心X
+    ll.bgaCenterX = (Config::PLAY_SIDE == 1)
+        ? Config::BGA_CENTER_X_1P
+        : Config::BGA_CENTER_X_2P;
+    // BGA中心Y (Config::BGA_CENTER_Y で自由に調整可能)
+    ll.bgaCenterY = Config::BGA_CENTER_Y;
 }
 
 // ★2P VS: 両サイドのレイアウトを事前計算
@@ -139,10 +139,18 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     loadAndCache(ren, texKeybeamBlue,  s + "beam_blue.png");  track(texKeybeamBlue);
     loadAndCache(ren, texKeybeamRed,   s + "beam_red.png");   track(texKeybeamRed);
 
-    loadAndCache(ren, texJudgeAtlas,  s + "judge.png");        track(texJudgeAtlas);
+    loadAndCache(ren, texJudgePGreatBlue,  s + "judge_p_great_blue.png");  track(texJudgePGreatBlue);
+    loadAndCache(ren, texJudgePGreatPink,  s + "judge_p_great_pink.png");  track(texJudgePGreatPink);
+    loadAndCache(ren, texJudgePGreatWhite, s + "judge_p_great_white.png"); track(texJudgePGreatWhite);
+    loadAndCache(ren, texJudgeGreat,       s + "judge_great_yellow.png");  track(texJudgeGreat);
+    loadAndCache(ren, texJudgeGood,        s + "judge_good.png");          track(texJudgeGood);
+    loadAndCache(ren, texJudgeBad,         s + "judge_bad.png");           track(texJudgeBad);
+    loadAndCache(ren, texJudgePoor,        s + "judge_poor.png");          track(texJudgePoor);
     loadAndCache(ren, texNumberAtlas, s + "judge_number.png"); track(texNumberAtlas);
     loadAndCache(ren, texLaneCover,   s + "lanecover.png");    track(texLaneCover);
 
+    loadAndCache(ren, texGaugeNumber,       s + "gauge_number.png");        track(texGaugeNumber);
+    loadAndCache(ren, texGaugeNumberDetail, s + "gauge_number_detail.png"); track(texGaugeNumberDetail);
     loadAndCache(ren, texGaugeAssist, s + "gauge_assist.png"); track(texGaugeAssist);
     loadAndCache(ren, texGaugeNormal, s + "gauge_normal.png"); track(texGaugeNormal);
     loadAndCache(ren, texGaugeHard,   s + "gauge_hard.png");   track(texGaugeHard);
@@ -151,14 +159,6 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     loadAndCache(ren, texGaugeDan,    s + "gauge_dan.png");    track(texGaugeDan);
     // ★修正: gauge_frame は init() で一度だけロードする。
     //        旧実装は renderGauge() 内で毎フレーム std::string 生成 + std::map 探索 + 初回 I/O が走っていた。
-    loadAndCache(ren, texGaugeFrame,  s + "gauge_frame.png");  track(texGaugeFrame);
-    // ★修正: Flame_nameplate は init() で一度だけロードする。
-    //        旧実装は renderUI() 内で毎フレーム std::string 生成 + std::map::find × 2 が走っていた。
-    loadAndCache(ren, texNameplate,   s + "Flame_nameplate.png"); track(texNameplate);
-
-    loadAndCache(ren, texKeys,      s + "7keypad.png");    track(texKeys);
-    loadAndCache(ren, lane_Flame,   s + "lane_Flame.png"); track(lane_Flame);
-    loadAndCache(ren, lane_Flame2,  s + "lane_Flame2.png"); track(lane_Flame2);
 
     texBombs.clear();
     for (int i = 0; i < 10; i++) {
@@ -167,17 +167,6 @@ void NoteRenderer::init(SDL_Renderer* ren) {
         if (tr) { texBombs.push_back(tr); skinOk++; } else { skinFail++; }
     }
 
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "2");
-    loadAndCache(ren, tex_scratch, s + "scratch.png"); track(tex_scratch);
-    if (tex_scratch) {
-        SDL_SetTextureScaleMode(tex_scratch.texture, SDL_ScaleModeBest);
-        SDL_SetTextureBlendMode(tex_scratch.texture, SDL_BLENDMODE_BLEND);
-    }
-    loadAndCache(ren, tex_scratch_center, s + "scratch_center.png"); track(tex_scratch_center);
-    if (tex_scratch_center) {
-        SDL_SetTextureScaleMode(tex_scratch_center.texture, SDL_ScaleModeBest);
-        SDL_SetTextureBlendMode(tex_scratch_center.texture, SDL_BLENDMODE_BLEND);
-    }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
 
     // スキンロード結果サマリ。失敗があれば WARN レベルで目立たせる。
@@ -208,14 +197,12 @@ void NoteRenderer::cleanup() {
     texNoteRed_LNS.reset();   texNoteRed_LNE.reset();
     texNoteRed_BSS_S.reset(); texNoteRed_BSS_Mid.reset(); texNoteRed_BSS_E.reset();
     texKeybeamWhite.reset(); texKeybeamBlue.reset(); texKeybeamRed.reset();
-    texJudgeAtlas.reset(); texNumberAtlas.reset(); texLaneCover.reset();
+    texJudgePGreatBlue.reset(); texJudgePGreatPink.reset(); texJudgePGreatWhite.reset();
+    texJudgeGreat.reset(); texJudgeGood.reset(); texJudgeBad.reset(); texJudgePoor.reset();
+    texNumberAtlas.reset(); texLaneCover.reset();
+    texGaugeNumber.reset(); texGaugeNumberDetail.reset();
     texGaugeAssist.reset(); texGaugeNormal.reset(); texGaugeHard.reset();
     texGaugeExHard.reset(); texGaugeHazard.reset(); texGaugeDan.reset();
-    texGaugeFrame.reset();  // ★修正: texGaugeFrame を解放
-    texNameplate.reset();   // ★修正: texNameplate を解放
-    texKeys.reset();
-    lane_Flame.reset(); lane_Flame2.reset();
-    tex_scratch.reset(); tex_scratch_center.reset();
 
     for (auto& b : texBombs) b.reset();
     texBombs.clear();
@@ -354,22 +341,11 @@ void NoteRenderer::renderDecisionInfo(SDL_Renderer* ren, const BMSHeader& header
 
 void NoteRenderer::renderUI(SDL_Renderer* ren, const BMSHeader& header, int fps, double bpm, int exScore) {
     int centerX = ll.bgaCenterX;
-    // ★修正: 毎フレームの std::string 生成 + std::map::find × 2 を完全廃止。
-    //        texNameplate は init() でロード済みのメンバ変数を直接参照する。
-    //        旧実装: platePath 構築(~120ns heap alloc) + find×2(O(log N) × 2) ≒ 520ns/フレームの無駄。
-    if (texNameplate) {
-        SDL_Rect dst = { centerX - texNameplate.w / 2, 0, texNameplate.w, texNameplate.h };
-        SDL_RenderCopy(ren, texNameplate.texture, NULL, &dst);
-    }
-    // ネームプレート上に楽曲名・アーティスト名を小フォントで中央揃え表示
     SDL_Color white  = {255, 255, 255, 255};
     SDL_Color dimmed = {180, 180, 180, 255};
     drawTextCached(ren, header.title,  centerX, 8,  white,  false, true);
     drawTextCached(ren, header.artist, centerX, 36, dimmed, false, true);
 }
-
-// スクラッチ回転アニメーション用状態（ファイルスコープで慣性を保持）
-static double s_scratchAngle = 0.0;
 
 void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchStatus) {
     // レーンレイアウトは init() および notifyLayoutChanged() 呼び出し時のみ再計算。
@@ -382,49 +358,6 @@ void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchSt
     SDL_Rect overallBg = { startX, 0, totalWidth, laneHeight };
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderFillRect(ren, &overallBg);
-
-    if (lane_Flame) {
-        int imgLanePartW = lane_Flame.w - 100;
-        if (imgLanePartW > 0) {
-            double scale = (double)totalWidth / imgLanePartW;
-            int f1W = (int)(lane_Flame.w * scale);
-            int f1X = (Config::PLAY_SIDE == 1) ? startX : (startX + totalWidth) - f1W;
-            SDL_Rect r = { f1X, 0, f1W, Config::SCREEN_HEIGHT };
-            SDL_RenderCopyEx(ren, lane_Flame.texture, NULL, &r, 0, NULL,
-                             (Config::PLAY_SIDE == 1 ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL));
-        }
-    }
-
-    if (tex_scratch) {
-        float fSize = ((float)Config::SCRATCH_WIDTH * 2.0f / 3.0f) * 2.0f;
-        float fX = (Config::PLAY_SIDE == 1)
-            ? (float)(startX + Config::SCRATCH_WIDTH) - fSize
-            : (float)(startX + totalWidth - Config::SCRATCH_WIDTH);
-        SDL_FRect rF = { fX, (float)Config::JUDGMENT_LINE_Y, fSize, fSize };
-        SDL_RenderCopyExF(ren, tex_scratch.texture, NULL, &rF, 0.0, NULL, SDL_FLIP_NONE);
-
-        if (tex_scratch_center) {
-            // 慣性付き回転：入力に応じて目標速度に追従
-            // 常時5deg/frame回転 + ボタン入力で±15追加、慣性なし
-            // 1P: 正回転、2P: 逆回転
-            double baseDir = (Config::PLAY_SIDE == 1) ? 1.0 : -1.0;
-            double delta = baseDir * 5.0;
-            if (scratchStatus == 1) delta += baseDir * (-15.0); // スクラッチ上
-            if (scratchStatus == 2) delta += baseDir * ( 15.0); // スクラッチ下
-            s_scratchAngle += delta;
-            if (s_scratchAngle >= 360.0) s_scratchAngle -= 360.0;
-            if (s_scratchAngle <    0.0) s_scratchAngle += 360.0;
-            SDL_RenderCopyExF(ren, tex_scratch_center.texture, NULL, &rF, s_scratchAngle, NULL, SDL_FLIP_NONE);
-        }
-    }
-
-    if (texKeys) {
-        int kX = ll.x[1], kEnd = ll.x[7] + ll.w[7];
-        int kW = kEnd - kX;
-        int kH = std::min(160, (int)(kW * ((float)texKeys.h / texKeys.w)));
-        SDL_Rect r = { kX, Config::JUDGMENT_LINE_Y, kW, kH };
-        SDL_RenderCopy(ren, texKeys.texture, NULL, &r);
-    }
 
     if (Config::SUDDEN_PLUS > 0) {
         // SUDDEN_PLUSオーバーレイはrenderSuddenLift()で描画（ノーツ描画後）
@@ -446,13 +379,17 @@ void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchSt
     SDL_RenderDrawLine(ren, startX, judgeY, startX + totalWidth, judgeY);
 
     // プログレスバー (楽曲進行)
-    int progX = (Config::PLAY_SIDE == 1) ? startX - 13 : startX + totalWidth + 8;
-    int progY = 38, progH = 420, indicatorH = 8;
+    int progX = (Config::PLAY_SIDE == 1)
+        ? startX - Config::PROGRESS_BAR_X_OFFSET
+        : startX + totalWidth + (Config::PROGRESS_BAR_X_OFFSET - 5);
+    int progY = Config::PROGRESS_BAR_Y;
+    int progH = Config::PROGRESS_BAR_H;
+    int indicatorH = 8;
     SDL_Rect progFrame = { progX, progY, 5, progH };
     SDL_SetRenderDrawColor(ren, 60, 60, 60, 255);
     SDL_RenderDrawRect(ren, &progFrame);
     int moveY = progY + (int)((progH - indicatorH) * progress);
-    SDL_Rect progIndicator = { progX, moveY, 5, indicatorH };
+    SDL_Rect progIndicator = { progX, moveY, 4, indicatorH };
     SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
     SDL_RenderFillRect(ren, &progIndicator);
 }
@@ -612,9 +549,8 @@ void NoteRenderer::renderBomb(SDL_Renderer* ren, int lane, int frame) {
     int fullW  = ll.w[lane];
     int cX     = ll.x[lane] + (fullW / 2);
     int judgeY = Config::JUDGMENT_LINE_Y - Config::LIFT;
-    // ★修正: ボムサイズを Config::BOMB_SIZE_FACTOR から計算
-    //        デフォルト BOMB_SIZE_FACTOR=420 → LANE_WIDTH*4.2 ≒ 旧実装と同等
-    int size   = (int)(Config::LANE_WIDTH * Config::BOMB_SIZE_FACTOR / 100);
+    // ボムサイズ: そのレーン幅 × BOMB_SIZE_FACTOR / 100
+    int size   = (int)(ll.w[lane] * Config::BOMB_SIZE_FACTOR / 100);
     const TextureRegion& tr = texBombs[frame];
     if (tr) {
         SDL_SetTextureBlendMode(tr.texture, SDL_BLENDMODE_ADD);
@@ -664,11 +600,8 @@ void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, f
     if (Config::SHOW_FAST_SLOW == 0) return;
     if (!isFast && !isSlow) return;
     Uint8 alpha = (Uint8)(255 * (1.0f - std::min(1.0f, progress)));
-    int judgeY  = Config::JUDGMENT_LINE_Y - Config::LIFT;
-    int x       = ll.baseX + ll.totalWidth / 2;
-    // 判定文字の高さ基準: renderJudgment は judgeY-50 あたりに描画するので
-    // FAST/SLOWはその上20px = judgeY - 90
-    int y       = judgeY - 200;
+    int x = ll.baseX + ll.totalWidth / 2;
+    int y = (Config::JUDGMENT_LINE_Y - Config::FASTSLOW_Y_OFFSET) - Config::LIFT;
 
     SDL_Color color = isFast ? SDL_Color{0, 200, 255, alpha}
                              : SDL_Color{255, 140, 0,   alpha};
@@ -685,48 +618,58 @@ void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, f
 }
 
 
-// ★修正：JudgeKind ベースのオーバーロード。文字列比較ループを廃止。
 void NoteRenderer::renderJudgment(SDL_Renderer* ren, JudgeKind kind, float progress, int combo) {
-    if (kind == JudgeKind::NONE || !texJudgeAtlas || !texNumberAtlas) return;
+    if (kind == JudgeKind::NONE || !texNumberAtlas) return;
 
-    // JudgeKind → アトラスインデックス
-    int type = 4; // POOR
+    // KindKind → 使用テクスチャを選択
+    // P-GREAT は3コマ点滅、それ以外は固定
+    const TextureRegion* jTex = nullptr;
+    bool isPGreat = false;
+    int  colorIdx = 3; // コンボ数字の色: 3=白
     switch (kind) {
-        case JudgeKind::PGREAT: type = 3; break;
-        case JudgeKind::GREAT:  type = 2; break;
-        case JudgeKind::GOOD:   type = 1; break;
-        case JudgeKind::BAD:    type = 0; break;
-        default: break;
+        case JudgeKind::PGREAT: {
+            isPGreat = true;
+            int frame = SDL_GetTicks() / 50 % 3;
+            jTex = (frame == 0) ? &texJudgePGreatBlue
+                 : (frame == 1) ? &texJudgePGreatPink
+                 :                &texJudgePGreatWhite;
+            colorIdx = SDL_GetTicks() / 50 % 3; // P-GREAT は色付きコンボ
+            break;
+        }
+        case JudgeKind::GREAT: jTex = &texJudgeGreat; break;
+        case JudgeKind::GOOD:  jTex = &texJudgeGood;  break;
+        case JudgeKind::BAD:   jTex = &texJudgeBad;   break;
+        default:               jTex = &texJudgePoor;  break;
     }
+    if (!jTex || !*jTex) return;
 
-    int jw = texJudgeAtlas.w / 7, jh = texJudgeAtlas.h;
-    int nw = texNumberAtlas.w / 4, nh = texNumberAtlas.h / 10;
-    int jIdx = (type == 3) ? (SDL_GetTicks() / 50 % 3)
-             : (type == 2 ? 3 : (type == 1 ? 4 : (type == 0 ? 5 : 6)));
     float s = 0.6f;
-    int dJW = (int)(jw * s), dJH = (int)(jh * s);
-    int dNW = (int)(nw * s), dNH = (int)(nh * s);
+    int nw = texNumberAtlas.w / 4, nh = texNumberAtlas.h / 10;
+    int dJW = (int)(jTex->w * s), dJH = (int)(jTex->h * s);
+    int dNW = (int)(nw * s),       dNH = (int)(nh * s);
 
-    // combo を文字列化（snprintf でスタック上に確保、heap alloc なし）
+    // combo を文字列化
     char comboStr[16] = {};
     int  comboLen = 0;
     if (combo > 0) {
         comboLen = snprintf(comboStr, sizeof(comboStr), "%d", combo);
     }
 
+    // センタリング: 判定画像の実サイズ基準なので全種で正確に中央に来る
     int tW = dJW + (comboLen > 0 ? 20 + comboLen * (dNW - 10) : 0);
-    int sX = ll.baseX + (ll.totalWidth + 10) / 2 - tW / 2;
-    int dY = Config::JUDGMENT_LINE_Y - 170 - Config::LIFT;
+    int centerX = ll.baseX + ll.totalWidth / 2;
+    int sX = centerX - tW / 2;
+    int dY = (Config::JUDGMENT_LINE_Y - Config::JUDGE_Y_OFFSET) - Config::LIFT;
     Uint8 alpha = (Uint8)(255 * (1.0f - progress));
 
-    SDL_Rect jS = { jIdx * jw, 0, jw, jh }, jD = { sX, dY, dJW, dJH };
-    SDL_SetTextureAlphaMod(texJudgeAtlas.texture, alpha);
-    SDL_RenderCopy(ren, texJudgeAtlas.texture, &jS, &jD);
+    SDL_Rect jD = { sX, dY, dJW, dJH };
+    SDL_SetTextureAlphaMod(jTex->texture, alpha);
+    SDL_RenderCopy(ren, jTex->texture, NULL, &jD);
 
     if (comboLen > 0) {
         int curX = sX + dJW + 20;
         SDL_SetTextureAlphaMod(texNumberAtlas.texture, alpha);
-        int colorIdx = (type == 3) ? (SDL_GetTicks() / 50 % 3) : 3;
+        int colorIdx = isPGreat ? (SDL_GetTicks() / 50 % 3) : 3;
         for (int ci = 0; ci < comboLen; ++ci) {
             int digit = comboStr[ci] - '0';
             SDL_Rect nS = { colorIdx * nw, digit * nh, nw, nh };
@@ -753,8 +696,8 @@ void NoteRenderer::renderCombo(SDL_Renderer* /*ren*/, int /*combo*/) {
 }
 
 void NoteRenderer::renderGauge(SDL_Renderer* ren, double gaugeValue, int gaugeOption, bool isFailed) {
-    int totalW = ll.totalWidth + 10;
-    int gX = ll.baseX;
+    int totalW = Config::GAUGE_W;
+    int gX = (Config::PLAY_SIDE == 1) ? Config::GAUGE_X_1P : Config::GAUGE_X_2P;
 
     const TextureRegion* target = nullptr;
     if (!isFailed) {
@@ -769,21 +712,9 @@ void NoteRenderer::renderGauge(SDL_Renderer* ren, double gaugeValue, int gaugeOp
     int dGH = 12;
     if (target && *target)
         dGH = std::min(25, (int)(totalW * ((float)target->h / target->w)));
-    int gY = (Config::SCREEN_HEIGHT - 40) - dGH;
-
-    // ★修正: gauge_frame はメンバ変数 texGaugeFrame から直接参照。
-    //        旧実装では毎フレーム std::string 生成 → std::map::find() (O(log N)) →
-    //        初回はファイル I/O まで走る3重の無駄があった。
-    const TextureRegion* fTR = texGaugeFrame ? &texGaugeFrame : nullptr;
+    int gY = (Config::SCREEN_HEIGHT - Config::GAUGE_BOTTOM_MARGIN) - dGH;
 
     if (target && *target) {
-        if (fTR && *fTR) {
-            float wR = (float)fTR->w / target->w, hR = (float)fTR->h / target->h;
-            int dFW = (int)(totalW * wR), dFH = (int)(dGH * hR);
-            SDL_Rect r = { (gX + totalW / 2) - (dFW / 2), (gY + dGH / 2) - (dFH / 2), dFW, dFH };
-            SDL_RenderCopyEx(ren, fTR->texture, NULL, &r, 0, NULL,
-                             (Config::PLAY_SIDE == 1 ? SDL_FLIP_NONE : SDL_FLIP_HORIZONTAL));
-        }
         SDL_SetTextureAlphaMod(target->texture, 60);
         SDL_Rect bgR = { gX, gY, totalW, dGH };
         SDL_RenderCopyEx(ren, target->texture, NULL, &bgR, 0, NULL,
@@ -820,6 +751,75 @@ void NoteRenderer::renderGauge(SDL_Renderer* ren, double gaugeValue, int gaugeOp
         SDL_Rect r = { gX, gY, totalW, dGH };
         SDL_RenderFillRect(ren, &r);
     }
+
+    // ─── ゲージ％数字描画 ────────────────────────────────────────────────────
+    // GAUGE_NUM_SHOW: 0=非表示
+    //                 1=整数表示 (GAUGE_DISPLAY_TYPE==1 なら2%刻み、0なら1%刻み)
+    //                 2=小数表示 (0.1%刻み、gauge_number_detail.png 使用)
+    //
+    // gauge_number.png        : "0123456789"  を横に10等分 → 1文字 = w/10
+    // gauge_number_detail.png : ".0123456789" を横に11等分 → 1文字 = w/11
+    //   先頭インデックス 0 = ドット、1〜10 = '0'〜'9'
+    //
+    // X座標は GAUGE_NUM_X_1P / GAUGE_NUM_X_2P (スクリーン絶対値) で独立管理。
+    // Y座標は gY + GAUGE_NUM_Y_OFFSET。
+    if (Config::GAUGE_NUM_SHOW > 0) {
+        const bool useDetail = (Config::GAUGE_NUM_SHOW == 2);
+        const TextureRegion& numTex = useDetail ? texGaugeNumberDetail : texGaugeNumber;
+        if (numTex) {
+            // 1文字のソース幅・高さ (テクスチャを等分)
+            const int numCols = useDetail ? 11 : 10;
+            const int srcCW   = numTex.w / numCols;
+            const int srcCH   = numTex.h;
+
+            // 表示値の決定
+            double val = std::clamp(gaugeValue, 0.0, 100.0);
+
+            // 文字配列に展開 (最大6文字: "100.0\0")
+            char buf[8];
+            if (useDetail) {
+                // 0.1%刻み: "100.0", "99.9", "0.0"
+                int iv = (int)val;
+                int fv = (int)std::round((val - iv) * 10.0);
+                if (fv >= 10) { iv++; fv = 0; }
+                iv = std::clamp(iv, 0, 100);
+                snprintf(buf, sizeof(buf), "%d.%d", iv, fv);
+            } else {
+                // 整数: GAUGE_DISPLAY_TYPEに従い2%または1%刻み
+                int iv = (int)std::round(val);
+                if (Config::GAUGE_DISPLAY_TYPE == 1) iv = (iv / 2) * 2; // 2%刻み
+                snprintf(buf, sizeof(buf), "%d", std::clamp(iv, 0, 100));
+            }
+            const int numLen = (int)strlen(buf);
+
+            // 描画サイズ: 高さをゲージ高さに合わせ、幅はアスペクト比で決定
+            const int dH  = (dGH > 0) ? dGH : srcCH;
+            const int dW  = (srcCH > 0) ? (srcCW * dH / srcCH) : srcCW;
+
+            // X起点: 1P/2P独立設定
+            const int numX = (Config::PLAY_SIDE == 1) ? Config::GAUGE_NUM_X_1P : Config::GAUGE_NUM_X_2P;
+            const int numY = gY + Config::GAUGE_NUM_Y_OFFSET;
+
+            SDL_SetTextureAlphaMod(numTex.texture, 220);
+            for (int ci = 0; ci < numLen; ci++) {
+                const char c = buf[ci];
+                int colIdx = -1;
+                if (useDetail) {
+                    if (c == '.')      colIdx = 0;          // ドット = インデックス0
+                    else if (c >= '0' && c <= '9') colIdx = (c - '0') + 1; // '0'=1, '9'=10
+                } else {
+                    if (c >= '0' && c <= '9') colIdx = c - '0'; // '0'=0, '9'=9
+                }
+                if (colIdx < 0) continue;
+
+                SDL_Rect src = { colIdx * srcCW, 0, srcCW, srcCH };
+                SDL_Rect dst = { numX + ci * dW,  numY, dW, dH };
+                SDL_RenderCopy(ren, numTex.texture, &src, &dst);
+            }
+            SDL_SetTextureAlphaMod(numTex.texture, 255);
+        }
+    }
+    // ────────────────────────────────────────────────────────────────────────
 }
 
 void NoteRenderer::renderLoading(SDL_Renderer* ren, int current, int total, const std::string& filename) {
@@ -885,6 +885,8 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
+
+
 
 
 

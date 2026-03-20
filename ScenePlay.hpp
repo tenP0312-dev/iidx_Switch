@@ -147,8 +147,11 @@ private:
     mutable int      cachedResolution_ = -1;
     mutable double   cachedPixelsPerY_  = 1.0;
     mutable double   cachedMaxVisibleY_ = 10000.0;
+
+    // ★デバッグ: true の間は BG・ノーツ以外を非表示（位置合わせ用）
+    // 確認完了後は false に変更するか、このフラグごと削除する
+    bool debugLayoutMode = false;
 };
 
+
 #endif
-
-

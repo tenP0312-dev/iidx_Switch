@@ -163,12 +163,16 @@ public:
     void clear();
     void cleanup();
 
-    void setLayout(int bgaCenterX) { cachedBgaCenterX = bgaCenterX; }
+    void setLayout(int bgaCenterX, int bgaCenterY = 360) {
+        cachedBgaCenterX = bgaCenterX;
+        cachedBgaCenterY = bgaCenterY;
+    }
 
 private:
     void videoWorker();
 
     int cachedBgaCenterX = 640;
+    int cachedBgaCenterY = 360;   // BGA中心Y座標
 
     struct BgaTextureEntry {
         SDL_Texture* tex = nullptr;
@@ -214,3 +218,5 @@ private:
 };
 
 #endif // BGAMANAGER_HPP
+
+

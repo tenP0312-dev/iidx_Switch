@@ -165,7 +165,7 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 
     BgaManager bga;
     bga.init(data.bga_images.size());
-    bga.setLayout(renderer.getBgaCenterX()); // NoteRendererが計算した値をBgaManagerに渡す
+    bga.setLayout(renderer.getBgaCenterX(), renderer.getBgaCenterY()); // NoteRendererが計算した値をBgaManagerに渡す
     bga.setEvents(data.bga_events);
     bga.setLayerEvents(data.layer_events);
     bga.setPoorEvents(data.poor_events);
@@ -759,18 +759,17 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
     // ARM Cortex-A57 の弱メモリモデルでは、double の torn read が起きうる。
     // BGA スレッドがフレーム途中に HIGH_SPEED を読むと中途半端な値になる。
     // フレーム先頭で 1 回コピーすれば、このフレーム内の一貫性が保たれる。
-    const int   fc_playSide   = Config::PLAY_SIDE;
-    const int   fc_visiblePx  = Config::VISIBLE_PX;
-    const int   fc_suddenPlus = Config::SUDDEN_PLUS;
-    const int   fc_lift       = Config::LIFT;
-
     SDL_SetRenderDrawColor(ren, 10, 10, 15, 255);
     SDL_RenderClear(ren);
     renderer.renderBackground(ren);
-    int bgaX = (fc_playSide == 1) ? 600 : 40;
-    int bgaY = 40;
+    // BGAの実際の描画位置はBgaManager内のcachedBgaCenterX(=ll.bgaCenterX)で決定される
+    // x,y引数はBgaManager::render()では使用されていないが互換のため残す
+    int bgaX = 0, bgaY = 0;
     double currentBpm = engine.getBpmFromMs(cur_ms);
-    renderer.renderUI(ren, header, fps, currentBpm, engine.getStatus().exScore);
+    // debugLayoutMode=true の間は BG・ノーツのみ表示（位置合わせ用）
+    if (!debugLayoutMode) {
+        renderer.renderUI(ren, header, fps, currentBpm, engine.getStatus().exScore);
+    }
     bga.render(cur_y, ren, bgaX, bgaY, cur_ms);
     renderer.renderLanes(ren, progress,
         scratchUpActive ? 1 : (scratchDownActive ? 2 : 0));
@@ -839,45 +838,42 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
     // SUDDEN_PLUS/LIFTオーバーレイをノーツの上に描画
     renderer.renderSuddenLift(ren);
 
-    // エフェクト(キービーム) → ボムの順で描画 (ノーツより前面)
-    // ★修正: 描画ループを NoteRenderer に移動し、ScenePlay は呼び出すだけにする。
-    renderer.renderEffects(ren, effectsBuf, effectCount, lanePressed, now);
-    renderer.renderBombs(ren, bombAnimsBuf, bombCount, now);
-
-    int laneCenterX = renderer.getLaneCenterX();
-
-    auto& judge = engine.getCurrentJudge();
-    if (judge.active) {
-        float p_raw = (float)(now - judge.startTime) / 500.0f;
-        if (p_raw >= 1.0f) judge.active = false;
-        else {
-            if (judge.kind == JudgeKind::PGREAT || (now / 32) % 2 != 0) {
-                renderer.renderJudgment(ren, judge.kind, 0.0f, engine.getStatus().combo);
-            }
-            // ★新規: FAST/SLOW 表示 (NoteRenderer に実装)
-            if (judge.isFast || judge.isSlow) {
-                renderer.renderFastSlow(ren, judge.isFast, judge.isSlow, p_raw, judge.diffMs);
-            }
-        }
-    }
-
-    renderer.renderCombo(ren, engine.getStatus().combo);
+    // ゲージは debugLayoutMode 中も常時表示
     renderer.renderGauge(ren, engine.getStatus().gauge, Config::GAUGE_OPTION, engine.getStatus().isFailed);
 
-    if (startButtonPressed) {
-        double hs = std::max(0.01, Config::HIGH_SPEED);
-        int effectiveHeight = Config::JUDGMENT_LINE_Y - Config::SUDDEN_PLUS;
-        auto calcSyncGN = [&](double bpm) {
-            return (int)((Config::HS_BASE / (hs * bpm)) * (double)effectiveHeight / Config::JUDGMENT_LINE_Y);
-        };
-        char gearText[256];
-        snprintf(gearText, sizeof(gearText), "GN: %d | SUD+:%d LIFT:%d", calcSyncGN(currentBpm), Config::SUDDEN_PLUS, Config::LIFT);
-        // ★修正: drawText → drawTextCached に変更。
-        //        drawText は毎回 TTF_RenderUTF8_Blended → SDL_CreateTextureFromSurface → SDL_DestroyTexture を行う。
-        //        START ボタン押下中は毎フレーム走り、TTF レンダリングが 0.5-2ms のスパイクになっていた。
-        //        drawTextCached はキャッシュにヒットする限りテクスチャを再利用する。
-        //        GN値は連続的に変化するが、変化しているフレームのみ TTF が走り、停止中はゼロコスト。
-        renderer.drawTextCached(ren, gearText, laneCenterX, 20, {0, 255, 0, 255}, false, true);
+    if (!debugLayoutMode) {
+        // エフェクト(キービーム) → ボムの順で描画 (ノーツより前面)
+        renderer.renderEffects(ren, effectsBuf, effectCount, lanePressed, now);
+        renderer.renderBombs(ren, bombAnimsBuf, bombCount, now);
+
+        int laneCenterX = renderer.getLaneCenterX();
+
+        auto& judge = engine.getCurrentJudge();
+        if (judge.active) {
+            float p_raw = (float)(now - judge.startTime) / 500.0f;
+            if (p_raw >= 1.0f) judge.active = false;
+            else {
+                if (judge.kind == JudgeKind::PGREAT || (now / 32) % 2 != 0) {
+                    renderer.renderJudgment(ren, judge.kind, 0.0f, engine.getStatus().combo);
+                }
+                if (judge.isFast || judge.isSlow) {
+                    renderer.renderFastSlow(ren, judge.isFast, judge.isSlow, p_raw, judge.diffMs);
+                }
+            }
+        }
+
+        renderer.renderCombo(ren, engine.getStatus().combo);
+
+        if (startButtonPressed) {
+            double hs = std::max(0.01, Config::HIGH_SPEED);
+            int effectiveHeight = Config::JUDGMENT_LINE_Y - Config::SUDDEN_PLUS;
+            auto calcSyncGN = [&](double bpm) {
+                return (int)((Config::HS_BASE / (hs * bpm)) * (double)effectiveHeight / Config::JUDGMENT_LINE_Y);
+            };
+            char gearText[256];
+            snprintf(gearText, sizeof(gearText), "GN: %d | SUD+:%d LIFT:%d", calcSyncGN(currentBpm), Config::SUDDEN_PLUS, Config::LIFT);
+            renderer.drawTextCached(ren, gearText, laneCenterX, 20, {0, 255, 0, 255}, false, true);
+        }
     }
     SDL_RenderPresent(ren);
 }
@@ -1258,7 +1254,7 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
 
     BgaManager bga;
     bga.init(data1P.bga_images.size());
-    bga.setLayout(Config::SCREEN_WIDTH / 2);
+    bga.setLayout(Config::SCREEN_WIDTH / 2, Config::BGA_CENTER_Y);
     bga.setEvents(data1P.bga_events);
     bga.setLayerEvents(data1P.layer_events);
     bga.setPoorEvents(data1P.poor_events);

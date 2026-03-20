@@ -68,9 +68,9 @@ void SceneOption::updateItemList() {
     items.emplace_back("[ GREEN NUMBER ]", getValStr(std::to_string(Config::GREEN_NUMBER), 5));
     // Index 6: LIFT
     items.emplace_back("[ LIFT ]", getValStr(std::to_string(Config::LIFT), 6));
-    // Index 7-8: LANE / SCRATCH WIDTH
-    items.emplace_back("[ LANE WIDTH ]", getValStr(std::to_string(Config::LANE_WIDTH), 7));
-    items.emplace_back("[ SCRATCH WIDTH ]", getValStr(std::to_string(Config::SCRATCH_WIDTH), 8));
+    // Index 7-8: LANE / SCRATCH WIDTH (AC固定 - 表示のみ)
+    items.emplace_back("[ KEY WHITE WIDTH ]", std::to_string(Config::AC_KEY_WHITE));
+    items.emplace_back("[ KEY BLACK WIDTH ]", std::to_string(Config::AC_KEY_BLACK));
     // Index 9: GAUGE DISPLAY
     items.emplace_back("[ GAUGE DISPLAY ]", getValStr((Config::GAUGE_DISPLAY_TYPE == 0 ? "1% STEP" : "2% STEP (IIDX)"), 9));
     // Index 10: START UP SCREEN
@@ -181,26 +181,6 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
                     if (targetVar < 0) targetVar = 0;
-                }
-                else if (cursor == 7) { // LANE WIDTH
-                    int& targetVar = Config::LANE_WIDTH;
-                    if (btn == Config::SYS_BTN_UP) targetVar += 5;
-                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 5;
-                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 1;
-                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 1;
-                    else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
-                    else changed = false;
-                    if (targetVar < 10) targetVar = 10;
-                }
-                else if (cursor == 8) { // SCRATCH WIDTH
-                    int& targetVar = Config::SCRATCH_WIDTH;
-                    if (btn == Config::SYS_BTN_UP) targetVar += 5;
-                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 5;
-                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 1;
-                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 1;
-                    else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
-                    else changed = false;
-                    if (targetVar < 10) targetVar = 10;
                 }
                 else if (cursor == 9) { // GAUGE DISPLAY
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN) Config::GAUGE_DISPLAY_TYPE = 1 - Config::GAUGE_DISPLAY_TYPE;
@@ -335,7 +315,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
         renderer.drawText(ren, "BGA AREA", 640, 420, {60, 60, 60, 255}, true, true);
 
         int previewCenterY = 400;
-        int previewWidth = (Config::LANE_WIDTH * 7) + Config::SCRATCH_WIDTH;
+        int previewWidth = (Config::AC_KEY_WHITE * 4 + Config::AC_KEY_BLACK * 3) + Config::AC_SCRATCH;
         int previewH = 400;
 
         for (int side = 0; side < 2; ++side) {
@@ -347,15 +327,23 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
             SDL_SetRenderDrawColor(ren, 80, 80, 80, 255);
             for (int l = 0; l <= 8; ++l) {
                 int x = startX;
-                int w = (side == 0) ? (l == 0 ? 0 : (l == 1 ? Config::SCRATCH_WIDTH : Config::SCRATCH_WIDTH + (l-1)*Config::LANE_WIDTH)) 
-                                    : (l < 8 ? l*Config::LANE_WIDTH : 7*Config::LANE_WIDTH + Config::SCRATCH_WIDTH);
+                // ACレイアウト: 1P=scratch左端, 2P=scratch右端
+                auto acLaneW = [](int lane) { return (lane == 8) ? Config::AC_SCRATCH : (lane % 2 == 0 ? Config::AC_KEY_BLACK : Config::AC_KEY_WHITE); };
+                int w = 0;
+                if (side == 0) { // 1P: scratch(8)→鍵1-7
+                    if (l == 0) w = 0;
+                    else if (l == 1) w = Config::AC_SCRATCH;
+                    else { w = Config::AC_SCRATCH; for (int k=1; k<l; k++) w += acLaneW(k); }
+                } else { // 2P: 鍵1-7→scratch(8)
+                    for (int k=1; k<=std::min(l,7); k++) w += acLaneW(k);
+                    if (l == 8) w += Config::AC_SCRATCH;
+                }
                 x += w;
                 SDL_RenderDrawLine(ren, x, laneBg.y, x, laneBg.y + laneBg.h);
 
                 if (l < 8) {
                     int noteX = x + 2;
-                    int noteW = (side == 0) ? (l == 0 ? Config::SCRATCH_WIDTH : Config::LANE_WIDTH) 
-                                            : (l == 7 ? Config::SCRATCH_WIDTH : Config::LANE_WIDTH);
+                    int noteW = acLaneW(l == 0 ? 8 : l);
                     noteW -= 4;
                     SDL_Rect noteRect = { noteX, laneBg.y + 50 + (l*30), noteW, 8 };
                     SDL_SetRenderDrawColor(ren, (l==0||l==7 ? 255 : (l%2==0 ? 255 : 100)), (l%2==0 ? 255 : 100), 255, 255);
@@ -435,3 +423,5 @@ void SceneOption::handleKeyConfig(int btn) {
         updateItemList();
     }
 }
+
+

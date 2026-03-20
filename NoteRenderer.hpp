@@ -128,6 +128,7 @@ public:
     int getLaneTotalWidth() const { return ll.totalWidth; }
     int getLaneCenterX()    const { return ll.baseX + ll.totalWidth / 2; }
     int getBgaCenterX()     const { return ll.bgaCenterX; }
+    int getBgaCenterY()     const { return ll.bgaCenterY; }
 
     // オプション画面でレーン幅・スクラッチ幅が変更されたときに呼ぶ。
     // init() 以外でレイアウトを更新できる唯一の窓口。
@@ -153,7 +154,6 @@ private:
     std::map<std::string, TextureRegion> textureCache;
     std::map<std::string, TTF_Font*>     customFontCache;
 
-    TextureRegion lane_Flame, lane_Flame2;
     TextureRegion texBackground;
     TextureRegion texNoteWhite, texNoteBlue, texNoteRed;
     TextureRegion texNoteWhite_LN, texNoteWhite_LN_Active1, texNoteWhite_LN_Active2;
@@ -166,14 +166,21 @@ private:
     // BSS (Back Spin Scratch) 専用テクスチャ
     TextureRegion texNoteRed_BSS_S, texNoteRed_BSS_Mid, texNoteRed_BSS_E;
     TextureRegion texKeybeamWhite, texKeybeamBlue, texKeybeamRed;
-    TextureRegion texJudgeAtlas, texNumberAtlas;
+    // 判定表示テクスチャ (各ファイル独立 → 画像ごとに実サイズでセンタリング)
+    TextureRegion texJudgePGreatBlue;   // judge_p_great_blue.png  (P-GREAT 点滅コマ1)
+    TextureRegion texJudgePGreatPink;   // judge_p_great_pink.png  (P-GREAT 点滅コマ2)
+    TextureRegion texJudgePGreatWhite;  // judge_p_great_white.png (P-GREAT 点滅コマ3)
+    TextureRegion texJudgeGreat;        // judge_great_yellow.png  (GREAT)
+    TextureRegion texJudgeGood;         // judge_good.png          (GOOD)
+    TextureRegion texJudgeBad;          // judge_bad.png           (BAD)
+    TextureRegion texJudgePoor;         // judge_poor.png          (POOR)
+    TextureRegion texNumberAtlas;
     std::vector<TextureRegion> texBombs;
     TextureRegion texLaneCover;
     TextureRegion texGaugeAssist, texGaugeNormal, texGaugeHard,
                   texGaugeExHard, texGaugeHazard, texGaugeDan;
-    TextureRegion texGaugeFrame;  // ★修正: init()でロード済み。renderGauge()内で毎フレーム string生成+map探索を行っていた問題を修正。
-    TextureRegion texNameplate;   // ★修正: renderUI()内で毎フレーム string生成+map探索していた問題を修正。init()でロード済み。
-    TextureRegion texKeys, tex_scratch, tex_scratch_center;
+    TextureRegion texGaugeNumber;        // gauge_number.png       : 0〜9 (10等分)
+    TextureRegion texGaugeNumberDetail;  // gauge_number_detail.png: .0123456789 (11等分)
 
     void loadAndCache(SDL_Renderer* ren, TextureRegion& region, const std::string& path);
 
@@ -184,6 +191,7 @@ private:
         int baseX      = 0;
         int totalWidth = 0;  // 全鍵盤幅 + スクラッチ幅
         int bgaCenterX = 0;
+        int bgaCenterY = 0;   // BGA中心Y座標
     } ll;
     LaneLayout ll1P, ll2P;  // ★2P VS: 両サイドのレイアウトキャッシュ
     bool dualLayoutReady = false;
@@ -192,21 +200,3 @@ private:
 };
 
 #endif // NOTERENDERER_HPP
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

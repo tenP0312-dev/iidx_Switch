@@ -511,7 +511,7 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
     }
 
     SDL_Rect dst = { dynamicCenterX - renderW / 2,
-                     Config::SCREEN_HEIGHT / 2 - renderH / 2,
+                     cachedBgaCenterY - renderH / 2,
                      renderW, renderH };
 
     while (currentEventIndex < bgaEvents.size()
@@ -631,3 +631,5 @@ void BgaManager::clear() {
 }
 
 void BgaManager::cleanup() { clear(); }
+
+

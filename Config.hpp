@@ -13,9 +13,47 @@ namespace Config {
     inline int SCREEN_WIDTH = 1280;
     inline int SCREEN_HEIGHT = 720;
     inline int JUDGMENT_LINE_Y = 482;
-    inline int LANE_WIDTH = 60;
-    inline int SCRATCH_WIDTH = 90;
-    inline int LANE_START_X = 385;
+    // ============================================================
+    //  ★ レイアウト定数 — ここを編集するだけで全座標が変わる ★
+    //
+    //  【レーン幅】  lane 1,3,5,7=白鍵  lane 2,4,6=黒鍵  lane 8=スクラッチ
+    //    総レーン幅 = 白×4 + 黒×3 + scratch = 44×4+62×3+88 = 462px
+    static constexpr int AC_KEY_WHITE  = 37;   // 白鍵幅 (px)
+    static constexpr int AC_KEY_BLACK  = 27;   // 黒鍵幅 (px)
+    static constexpr int AC_SCRATCH    = 60;   // スクラッチ幅 (px)
+
+    //  【レーン全体の位置】
+    //    1P: スクラッチ左端が LANE_BASE_X_1P
+    //    2P: 自動で鏡像配置 (SCREEN_WIDTH - LANE_BASE_X_1P - totalWidth)
+    static constexpr int LANE_BASE_X_1P = 50;  // 1Pレーン全体の左端X (px)
+
+    //  【BGA表示中心位置】
+    //    BGAは中心座標を指定。アスペクト比を保ったまま高さ512pxに自動スケール。
+    //    1P: レーン右側の空白中央  2P: レーン左側の空白中央
+    static constexpr int BGA_CENTER_X_1P = 820; // 1P BGA中心X (px)  ← (512+462+50+1280)/2 ≒ 871
+    static constexpr int BGA_CENTER_X_2P = 690; // 2P BGA中心X (px)  ← 1280 - BGA_CENTER_X_1P
+    inline int BGA_CENTER_Y = 340; // BGA中心Y (px) ← この値を変えるとBGAのY位置が変わる
+
+    //  【プログレスバー】
+    //    1P: レーン左端の外側  2P: レーン右端の外側
+    static constexpr int PROGRESS_BAR_X_OFFSET = 16; // レーン端からの距離 (px)
+    static constexpr int PROGRESS_BAR_Y        = 39;  // 上端Y (px)
+    static constexpr int PROGRESS_BAR_H        = 418; // 高さ (px)
+
+    //  【ゲージ】
+    //    X: 1P/2P それぞれ指定。W: 幅指定
+    //    Y: 画面下端から GAUGE_BOTTOM_MARGIN 上
+    static constexpr int GAUGE_X_1P         = 30;  // 1P ゲージ左端X (px)  ← LANE_BASE_X_1P と合わせると自然
+    static constexpr int GAUGE_X_2P         = 749; // 2P ゲージ左端X (px)  ← 2Pレーン左端に合わせる
+    static constexpr int GAUGE_W            = 301; // ゲージ幅 (px)        ← 総レーン幅+10 = 472
+    static constexpr int GAUGE_BOTTOM_MARGIN = 101; // 画面下端からゲージ下端までの距離 (px)
+
+    //  【判定表示・FAST/SLOW】
+    //    X はレーン中央に自動計算 (ll.baseX + ll.totalWidth/2)
+    //    Y は JUDGMENT_LINE_Y 基準のオフセットで指定
+    static constexpr int JUDGE_Y_OFFSET    = 170; // 判定表示: 判定ラインより上 (px)
+    static constexpr int FASTSLOW_Y_OFFSET = 195; // FAST/SLOW: 判定ラインより上 (px)
+    // ============================================================
 
     // --- ゲームプレイ設定 (IIDX 仕様アップデート) ---
     inline constexpr int HS_BASE = 174728;
@@ -47,6 +85,14 @@ namespace Config {
 
     // --- ゲージ表示設定 ---
     inline int GAUGE_DISPLAY_TYPE = 1;
+
+    // ゲージ％数字表示設定
+    // GAUGE_NUM_SHOW: 0=非表示, 1=整数(GAUGE_DISPLAY_TYPEに従う), 2=小数(0.1%刻み, gauge_number_detail使用)
+    // GAUGE_NUM_X: 数字左端のX座標。1P/2Pで独立して設定（スクリーン絶対座標）
+    inline int GAUGE_NUM_SHOW = 1;
+    inline int GAUGE_NUM_X_1P = 70;   // 1P 数字表示 左端X (px)
+    inline int GAUGE_NUM_X_2P = 751;  // 2P 数字表示 左端X (px)
+    inline int GAUGE_NUM_Y_OFFSET = -16; // ゲージ上端からのYオフセット (px、負=ゲージより上)
     // 【追加】段位ゲージ開始％設定
     inline int DAN_GAUGE_START_PERCENT = 100;
 
@@ -57,8 +103,7 @@ namespace Config {
 
     // --- ボム演出設定 ---
     inline int BOMB_DURATION_MS = 300; // ボム1発の表示時間(ms) 50〜1000
-    inline int BOMB_SIZE_FACTOR = 420; // ボムサイズ係数 (LANE_WIDTH * BOMB_SIZE_FACTOR / 100) * 3
-                                       // デフォルト420 = LANE_WIDTH*1.4*3 と同等
+    inline int BOMB_SIZE_FACTOR = 420; // ボムサイズ係数: ll.w[lane] * BOMB_SIZE_FACTOR / 100
 
     // --- 【追加】システム設定 ---
     inline int START_UP_OPTION = 1; // 0: Title, 1: Select (デフォルト選曲画面)
@@ -167,14 +212,12 @@ namespace Config {
         int    VISIBLE_PX;
         int    SUDDEN_PLUS;
         int    LIFT;
-        int    LANE_WIDTH;
-        int    SCRATCH_WIDTH;
         int    PLAY_OPTION;
         int    GAUGE_OPTION;
         int    ASSIST_OPTION;
         int    EX_OPTION;
         int    MORE_NOTES_COUNT;
-        int    LN_OPTION;  // ★追加
+        int    LN_OPTION;
         int    GAUGE_DISPLAY_TYPE;
         int    DAN_GAUGE_START_PERCENT;
         int    JUDGE_OFFSET;
@@ -212,14 +255,12 @@ namespace Config {
         s.VISIBLE_PX             = VISIBLE_PX;
         s.SUDDEN_PLUS            = SUDDEN_PLUS;
         s.LIFT                   = LIFT;
-        s.LANE_WIDTH             = LANE_WIDTH;
-        s.SCRATCH_WIDTH          = SCRATCH_WIDTH;
         s.PLAY_OPTION            = PLAY_OPTION;
         s.GAUGE_OPTION           = GAUGE_OPTION;
         s.ASSIST_OPTION          = ASSIST_OPTION;
         s.EX_OPTION              = EX_OPTION;
         s.MORE_NOTES_COUNT       = MORE_NOTES_COUNT;
-        s.LN_OPTION              = LN_OPTION;  // ★追加
+        s.LN_OPTION              = LN_OPTION;
         s.GAUGE_DISPLAY_TYPE     = GAUGE_DISPLAY_TYPE;
         s.DAN_GAUGE_START_PERCENT = DAN_GAUGE_START_PERCENT;
         s.JUDGE_OFFSET           = JUDGE_OFFSET;
@@ -293,14 +334,12 @@ namespace Config {
                 else if (key == "VISIBLE_PX") VISIBLE_PX = std::stoi(val);
                 else if (key == "SUDDEN_PLUS") SUDDEN_PLUS = std::stoi(val);
                 else if (key == "LIFT") LIFT = std::stoi(val);
-                else if (key == "LANE_WIDTH") LANE_WIDTH = std::stoi(val);
-                else if (key == "SCRATCH_WIDTH") SCRATCH_WIDTH = std::stoi(val);
                 else if (key == "PLAY_OPTION") PLAY_OPTION = std::stoi(val);
                 else if (key == "GAUGE_OPTION") GAUGE_OPTION = std::stoi(val);
                 else if (key == "ASSIST_OPTION") ASSIST_OPTION = std::stoi(val);
                 else if (key == "EX_OPTION") EX_OPTION = std::stoi(val);
                 else if (key == "MORE_NOTES_COUNT") MORE_NOTES_COUNT = std::stoi(val);
-                else if (key == "LN_OPTION") LN_OPTION = std::stoi(val);  // ★追加
+                else if (key == "LN_OPTION") LN_OPTION = std::stoi(val);
                 else if (key == "GAUGE_DISPLAY_TYPE") GAUGE_DISPLAY_TYPE = std::stoi(val);
                 else if (key == "DAN_GAUGE_START_PERCENT") DAN_GAUGE_START_PERCENT = std::stoi(val); 
                 else if (key == "JUDGE_OFFSET") JUDGE_OFFSET = std::stoi(val);
@@ -369,14 +408,12 @@ namespace Config {
         file << "VISIBLE_PX="             << s.VISIBLE_PX             << "\n";
         file << "SUDDEN_PLUS="            << s.SUDDEN_PLUS            << "\n";
         file << "LIFT="                   << s.LIFT                   << "\n";
-        file << "LANE_WIDTH="             << s.LANE_WIDTH             << "\n";
-        file << "SCRATCH_WIDTH="          << s.SCRATCH_WIDTH          << "\n";
         file << "PLAY_OPTION="            << s.PLAY_OPTION            << "\n";
         file << "GAUGE_OPTION="           << s.GAUGE_OPTION           << "\n";
         file << "ASSIST_OPTION="          << s.ASSIST_OPTION          << "\n";
         file << "EX_OPTION="              << s.EX_OPTION              << "\n";
         file << "MORE_NOTES_COUNT="       << s.MORE_NOTES_COUNT       << "\n";
-        file << "LN_OPTION="              << s.LN_OPTION              << "\n";  // ★追加
+        file << "LN_OPTION="              << s.LN_OPTION              << "\n";
         file << "GAUGE_DISPLAY_TYPE="     << s.GAUGE_DISPLAY_TYPE     << "\n";
         file << "DAN_GAUGE_START_PERCENT=" << s.DAN_GAUGE_START_PERCENT << "\n";
         file << "JUDGE_OFFSET="           << s.JUDGE_OFFSET           << "\n";
@@ -448,3 +485,5 @@ namespace Config {
     }
 }
 #endif
+
+
