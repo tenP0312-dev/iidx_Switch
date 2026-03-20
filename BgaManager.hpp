@@ -122,8 +122,8 @@ private:
     // binIdx(size): ペイロードサイズ size に対応するビンインデックス
     //   size=1..32 → 0, 33..64 → 1, 65..96 → 2, ...
     static constexpr size_t BIN_STEP     = 32;
-    static constexpr size_t MAX_BIN_SIZE = 4096; // これ以下のサイズをフリーリスト管理
-    static constexpr size_t N_BINS       = MAX_BIN_SIZE / BIN_STEP; // = 128
+    static constexpr size_t MAX_BIN_SIZE = 32768; // これ以下のサイズをフリーリスト管理 (H.264作業バッファ最大~17KB)
+    static constexpr size_t N_BINS       = MAX_BIN_SIZE / BIN_STEP; // = 1024
 
     static size_t binIdx(size_t size) {
         size_t s = alignUp(size == 0 ? 1 : size);

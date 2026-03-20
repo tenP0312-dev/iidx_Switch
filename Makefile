@@ -1,7 +1,7 @@
 #---------------------------------------------------------------------------------
 # Nintendo Switch (nro) & macOS 共通 Makefile
 #---------------------------------------------------------------------------------
-TARGET      := GeminiRhythm
+TARGET      := BMSWITCH
 BUILD       := build
 SOURCES     := main.cpp BmsonLoader.cpp SoundManager.cpp NoteRenderer.cpp \
                SceneSelect.cpp ScenePlay.cpp SceneResult.cpp PlayEngine.cpp ScoreManager.cpp \
