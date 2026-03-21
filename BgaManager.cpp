@@ -501,13 +501,13 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
 
     int dynamicCenterX = cachedBgaCenterX;
 
-    int renderH = 512, renderW = 512;
+    int renderH = Config::BGA_HEIGHT, renderW = Config::BGA_HEIGHT;
     if (isVideoMode && videoTexture) {
-        if (videoTexH > 0) renderW = (int)(512.0f * (float)videoTexW / (float)videoTexH);
+        if (videoTexH > 0) renderW = (int)((float)Config::BGA_HEIGHT * (float)videoTexW / (float)videoTexH);
     } else if (lastDisplayedId != -1) {
         auto it = textures.find(lastDisplayedId);
         if (it != textures.end() && it->second.h > 0)
-            renderW = (int)(512.0f * (float)it->second.w / (float)it->second.h);
+            renderW = (int)((float)Config::BGA_HEIGHT * (float)it->second.w / (float)it->second.h);
     }
 
     SDL_Rect dst = { dynamicCenterX - renderW / 2,

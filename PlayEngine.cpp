@@ -472,6 +472,15 @@ void PlayEngine::init(BMSData& data) {
     status.gaugeHistory.clear();
     status.gaugeHistory.reserve(2000); // 最大曲長(~6分) x 200ms間隔 = 1800サンプル程度
     lastHistoryUpdateMs = -1000.0;
+
+    // MIN/MAX BPM 計算
+    minBpm_ = data.header.bpm;
+    maxBpm_ = data.header.bpm;
+    for (const auto& ev : data.bpm_events) {
+        if (ev.bpm < minBpm_) minBpm_ = ev.bpm;
+        if (ev.bpm > maxBpm_) maxBpm_ = ev.bpm;
+    }
+    bpmVaries_ = !data.bpm_events.empty();
 }
 
 void PlayEngine::update(double cur_ms, uint32_t now) {

@@ -96,8 +96,8 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
     // TTCファイルはTTF_OpenFontIndexでインデックス0を指定して読む
     // TTF_OpenFont は TTC に対して index=0 相当だが Switch で失敗するケースがあるため明示指定
-    fontSmall = TTF_OpenFontIndex(Config::FONT_PATH.c_str(), 24, 0);
-    fontBig   = TTF_OpenFontIndex(Config::FONT_PATH.c_str(), 48, 0);
+    fontSmall = TTF_OpenFontIndex(Config::FONT_PATH.c_str(), Config::FONT_SIZE_SMALL, 0);
+    fontBig   = TTF_OpenFontIndex(Config::FONT_PATH.c_str(), Config::FONT_SIZE_BIG,   0);
     if (!fontSmall || !fontBig) {
         LOG_ERROR("NoteRenderer", "init: font load failed path='%s' small=%s big=%s",
                   Config::FONT_PATH.c_str(),
@@ -151,6 +151,10 @@ void NoteRenderer::init(SDL_Renderer* ren) {
 
     loadAndCache(ren, texGaugeNumber,       s + "gauge_number.png");        track(texGaugeNumber);
     loadAndCache(ren, texGaugeNumberDetail, s + "gauge_number_detail.png"); track(texGaugeNumberDetail);
+    loadAndCache(ren, texHsNumber,          s + "hs_number.png");           track(texHsNumber);
+    loadAndCache(ren, texScoreNumber,       s + "score_number.png");        track(texScoreNumber);
+    loadAndCache(ren, texTurntable,         s + "turn_center.png");         track(texTurntable);
+    loadAndCache(ren, texGaugeUp,           s + "gauge_up.png");            track(texGaugeUp);
     loadAndCache(ren, texGaugeAssist, s + "gauge_assist.png"); track(texGaugeAssist);
     loadAndCache(ren, texGaugeNormal, s + "gauge_normal.png"); track(texGaugeNormal);
     loadAndCache(ren, texGaugeHard,   s + "gauge_hard.png");   track(texGaugeHard);
@@ -200,7 +204,7 @@ void NoteRenderer::cleanup() {
     texJudgePGreatBlue.reset(); texJudgePGreatPink.reset(); texJudgePGreatWhite.reset();
     texJudgeGreat.reset(); texJudgeGood.reset(); texJudgeBad.reset(); texJudgePoor.reset();
     texNumberAtlas.reset(); texLaneCover.reset();
-    texGaugeNumber.reset(); texGaugeNumberDetail.reset();
+    texGaugeNumber.reset(); texGaugeNumberDetail.reset(); texHsNumber.reset(); texScoreNumber.reset(); texTurntable.reset(); texGaugeUp.reset();
     texGaugeAssist.reset(); texGaugeNormal.reset(); texGaugeHard.reset();
     texGaugeExHard.reset(); texGaugeHazard.reset(); texGaugeDan.reset();
 
@@ -236,7 +240,7 @@ void NoteRenderer::drawText(SDL_Renderer* ren, const std::string& text, int x, i
     TTF_Font* targetFont = isBig ? fontBig : fontSmall;
     if (!fontPath.empty()) {
         if (customFontCache.find(fontPath) == customFontCache.end()) {
-            TTF_Font* cf = TTF_OpenFontIndex(fontPath.c_str(), isBig ? 48 : 24, 0);
+            TTF_Font* cf = TTF_OpenFontIndex(fontPath.c_str(), isBig ? Config::FONT_SIZE_BIG : Config::FONT_SIZE_SMALL, 0);
             if (cf) customFontCache[fontPath] = cf;
         }
         if (customFontCache.count(fontPath)) targetFont = customFontCache[fontPath];
@@ -345,6 +349,8 @@ void NoteRenderer::renderUI(SDL_Renderer* ren, const BMSHeader& header, int fps,
     SDL_Color dimmed = {180, 180, 180, 255};
     drawTextCached(ren, header.title,  centerX, 8,  white,  false, true);
     drawTextCached(ren, header.artist, centerX, 36, dimmed, false, true);
+    renderScore(ren, exScore);
+    renderHiSpeed(ren);
 }
 
 void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchStatus) {
@@ -354,10 +360,6 @@ void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchSt
     int startX     = ll.baseX;
     int laneHeight = 482;
     int judgeY     = Config::JUDGMENT_LINE_Y - Config::LIFT;
-
-    SDL_Rect overallBg = { startX, 0, totalWidth, laneHeight };
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-    SDL_RenderFillRect(ren, &overallBg);
 
     if (Config::SUDDEN_PLUS > 0) {
         // SUDDEN_PLUSオーバーレイはrenderSuddenLift()で描画（ノーツ描画後）
@@ -392,6 +394,185 @@ void NoteRenderer::renderLanes(SDL_Renderer* ren, double progress, int scratchSt
     SDL_Rect progIndicator = { progX, moveY, 4, indicatorH };
     SDL_SetRenderDrawColor(ren, 200, 200, 200, 255);
     SDL_RenderFillRect(ren, &progIndicator);
+}
+
+void NoteRenderer::renderLaneDividers(SDL_Renderer* ren) {
+    int laneHeight = 482;
+    int judgeY     = Config::JUDGMENT_LINE_Y - Config::LIFT;
+    SDL_SetRenderDrawColor(ren, 50, 50, 50, 255);
+    for (int i = 1; i <= 8; i++) {
+        SDL_RenderDrawLine(ren, ll.x[i], 0, ll.x[i], laneHeight);
+    }
+    SDL_RenderDrawLine(ren, ll.baseX + ll.totalWidth, 0, ll.baseX + ll.totalWidth, laneHeight);
+    SDL_SetRenderDrawColor(ren, 255, 0, 0, 255);
+    SDL_RenderDrawLine(ren, ll.baseX, judgeY, ll.baseX + ll.totalWidth, judgeY);
+}
+
+void NoteRenderer::renderBpm(SDL_Renderer* ren, double currentBpm, double minBpm, double maxBpm, bool bpmVaries) {
+    if (Config::BPM_SHOW == 0 || !texHsNumber) return;
+    bool is2P = (Config::PLAY_SIDE == 2);
+
+    const int numCols = 10;
+    const int srcCW   = texHsNumber.w / numCols;
+    const int srcCH   = texHsNumber.h;
+    int align          = is2P ? Config::BPM_ALIGN_2P        : Config::BPM_ALIGN_1P;
+    int scaleCur       = is2P ? Config::BPM_SCALE_2P        : Config::BPM_SCALE_1P;
+    int scaleMM        = is2P ? Config::BPM_MINMAX_SCALE_2P : Config::BPM_MINMAX_SCALE_1P;
+    int curX           = is2P ? Config::BPM_CUR_X_2P        : Config::BPM_CUR_X_1P;
+    int curY           = is2P ? Config::BPM_CUR_Y_2P        : Config::BPM_CUR_Y_1P;
+    int minX           = is2P ? Config::BPM_MIN_X_2P        : Config::BPM_MIN_X_1P;
+    int minY           = is2P ? Config::BPM_MIN_Y_2P        : Config::BPM_MIN_Y_1P;
+    int maxX           = is2P ? Config::BPM_MAX_X_2P        : Config::BPM_MAX_X_1P;
+    int maxY           = is2P ? Config::BPM_MAX_Y_2P        : Config::BPM_MAX_Y_1P;
+
+    auto drawNum = [&](double val, int baseX, int baseY, int scale) {
+        const int dH = std::max(1, srcCH * scale / 100);
+        const int dW = (srcCH > 0) ? (srcCW * dH / srcCH) : srcCW;
+        int iv = (int)std::round(val);
+        if (iv < 0) iv = 0;
+        char buf[12];
+        snprintf(buf, sizeof(buf), "%d", iv);
+        int len    = (int)strlen(buf);
+        int totalW = len * dW;
+        int startX;
+        switch (align) {
+            case 1:  startX = baseX - totalW / 2; break;
+            case 2:  startX = baseX - totalW;     break;
+            default: startX = baseX;               break;
+        }
+        for (int ci = 0; ci < len; ci++) {
+            char c = buf[ci];
+            if (c < '0' || c > '9') continue;
+            int colIdx = c - '0';
+            SDL_Rect src = { colIdx * srcCW, 0, srcCW, srcCH };
+            SDL_Rect dst = { startX + ci * dW, baseY, dW, dH };
+            SDL_RenderCopy(ren, texHsNumber.texture, &src, &dst);
+        }
+    };
+
+    drawNum(currentBpm, curX, curY, scaleCur);
+
+    if (bpmVaries || Config::BPM_SHOW_MINMAX == 1) {
+        drawNum(minBpm, minX, minY, scaleMM);
+        drawNum(maxBpm, maxX, maxY, scaleMM);
+    }
+}
+
+void NoteRenderer::renderHiSpeed(SDL_Renderer* ren) {
+    if (Config::HS_DISP_SHOW == 0 || !texHsNumber) return;
+    bool is2P = (Config::PLAY_SIDE == 2);
+
+    const int numCols = 10;
+    const int srcCW   = texHsNumber.w / numCols;
+    const int srcCH   = texHsNumber.h;
+    int scale = is2P ? Config::HS_DISP_SCALE_2P : Config::HS_DISP_SCALE_1P;
+    int align = is2P ? Config::HS_DISP_ALIGN_2P : Config::HS_DISP_ALIGN_1P;
+    int baseX = is2P ? Config::HS_DISP_X_2P     : Config::HS_DISP_X_1P;
+    int baseY = is2P ? Config::HS_DISP_Y_2P     : Config::HS_DISP_Y_1P;
+    const int dH = std::max(1, srcCH * scale / 100);
+    const int dW = (srcCH > 0) ? (srcCW * dH / srcCH) : srcCW;
+
+    int iv = (int)std::round(Config::HIGH_SPEED * 100.0);
+    if (iv < 0) iv = 0;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%d", iv);
+    int len    = (int)strlen(buf);
+    int totalW = len * dW;
+    int startX;
+    switch (align) {
+        case 1:  startX = baseX - totalW / 2; break;
+        case 2:  startX = baseX - totalW;     break;
+        default: startX = baseX;               break;
+    }
+    for (int ci = 0; ci < len; ci++) {
+        char c = buf[ci];
+        if (c < '0' || c > '9') continue;
+        int colIdx = c - '0';
+        SDL_Rect src = { colIdx * srcCW, 0, srcCW, srcCH };
+        SDL_Rect dst = { startX + ci * dW, baseY, dW, dH };
+        SDL_RenderCopy(ren, texHsNumber.texture, &src, &dst);
+    }
+}
+
+void NoteRenderer::updateTurntable(int scratchStatus, uint32_t now) {
+    if (turntableLastMs_ == 0) {
+        turntableLastMs_ = now;
+        return;
+    }
+    double deltaMs = (double)(now - turntableLastMs_);
+    turntableLastMs_ = now;
+
+    int speedVal;
+    switch (scratchStatus) {
+        case 1:  speedVal = Config::TURNTABLE_SPEED_A;      break;
+        case 2:  speedVal = Config::TURNTABLE_SPEED_B;      break;
+        default: speedVal = Config::TURNTABLE_SPEED_NORMAL; break;
+    }
+    // speedVal 10 = 360 deg/sec
+    double degreesPerMs = speedVal * 36.0 / 1000.0;
+    turntableAngle_ += degreesPerMs * deltaMs;
+    if (turntableAngle_ >= 360.0)  turntableAngle_ -= 360.0;
+    if (turntableAngle_ < 0.0)     turntableAngle_ += 360.0;
+}
+
+void NoteRenderer::renderTurntable(SDL_Renderer* ren) {
+    if (Config::TURNTABLE_SHOW == 0 || !texTurntable) return;
+    bool is2P = (Config::PLAY_SIDE == 2);
+    int scale = is2P ? Config::TURNTABLE_SCALE_2P : Config::TURNTABLE_SCALE_1P;
+    float cx  = (float)(is2P ? Config::TURNTABLE_X_2P : Config::TURNTABLE_X_1P);
+    float cy  = (float)(is2P ? Config::TURNTABLE_Y_2P : Config::TURNTABLE_Y_1P);
+    float dw  = (float)std::max(1, texTurntable.w * scale / 100);
+    float dh  = (float)std::max(1, texTurntable.h * scale / 100);
+    SDL_FRect  dst    = { cx - dw * 0.5f, cy - dh * 0.5f, dw, dh };
+    SDL_FPoint center = { dw * 0.5f, dh * 0.5f };
+    SDL_RenderCopyExF(ren, texTurntable.texture, nullptr, &dst,
+                      turntableAngle_, &center, SDL_FLIP_NONE);
+}
+
+void NoteRenderer::renderScore(SDL_Renderer* ren, int score) {
+    if (Config::SCORE_SHOW == 0 || !texScoreNumber) return;
+    bool is2P = (Config::PLAY_SIDE == 2);
+
+    const int numCols = 10;
+    const int srcCW   = texScoreNumber.w / numCols;
+    const int srcCH   = texScoreNumber.h;
+    int scale = is2P ? Config::SCORE_SCALE_2P : Config::SCORE_SCALE_1P;
+    int align = is2P ? Config::SCORE_ALIGN_2P : Config::SCORE_ALIGN_1P;
+    int baseX = is2P ? Config::SCORE_X_2P     : Config::SCORE_X_1P;
+    int baseY = is2P ? Config::SCORE_Y_2P     : Config::SCORE_Y_1P;
+    const int dH = std::max(1, srcCH * scale / 100);
+    const int dW = (srcCH > 0) ? (srcCW * dH / srcCH) : srcCW;
+
+    const int digits     = 4;
+    int clampedScore     = std::clamp(score, 0, 9999);
+    int d[4] = {
+        clampedScore / 1000,
+        (clampedScore / 100) % 10,
+        (clampedScore / 10)  % 10,
+        clampedScore         % 10
+    };
+
+    // 先頭の0を薄くする（最低1桁は常に表示）
+    int firstNonZero = 0;
+    while (firstNonZero < digits - 1 && d[firstNonZero] == 0) firstNonZero++;
+
+    const int totalW = digits * dW;
+    int startX;
+    switch (align) {
+        case 1:  startX = baseX - totalW / 2; break;
+        case 2:  startX = baseX - totalW;     break;
+        default: startX = baseX;               break;
+    }
+
+    for (int ci = 0; ci < digits; ci++) {
+        SDL_Rect src = { d[ci] * srcCW, 0, srcCW, srcCH };
+        SDL_Rect dst = { startX + ci * dW, baseY, dW, dH };
+        if (ci < firstNonZero)
+            SDL_SetTextureAlphaMod(texScoreNumber.texture, 64); // 25%
+        SDL_RenderCopy(ren, texScoreNumber.texture, &src, &dst);
+        if (ci < firstNonZero)
+            SDL_SetTextureAlphaMod(texScoreNumber.texture, 255);
+    }
 }
 
 void NoteRenderer::renderNote(SDL_Renderer* ren, const PlayableNote& note,
@@ -549,8 +730,7 @@ void NoteRenderer::renderBomb(SDL_Renderer* ren, int lane, int frame) {
     int fullW  = ll.w[lane];
     int cX     = ll.x[lane] + (fullW / 2);
     int judgeY = Config::JUDGMENT_LINE_Y - Config::LIFT;
-    // ボムサイズ: そのレーン幅 × BOMB_SIZE_FACTOR / 100
-    int size   = (int)(ll.w[lane] * Config::BOMB_SIZE_FACTOR / 100);
+    int size   = Config::BOMB_SIZE;
     const TextureRegion& tr = texBombs[frame];
     if (tr) {
         SDL_SetTextureBlendMode(tr.texture, SDL_BLENDMODE_ADD);
@@ -762,6 +942,7 @@ void NoteRenderer::renderGauge(SDL_Renderer* ren, double gaugeValue, int gaugeOp
     //   先頭インデックス 0 = ドット、1〜10 = '0'〜'9'
     //
     // X座標は GAUGE_NUM_X_1P / GAUGE_NUM_X_2P (スクリーン絶対値) で独立管理。
+    // ★右揃え: numX を文字列右端の座標として扱う。
     // Y座標は gY + GAUGE_NUM_Y_OFFSET。
     if (Config::GAUGE_NUM_SHOW > 0) {
         const bool useDetail = (Config::GAUGE_NUM_SHOW == 2);
@@ -792,13 +973,24 @@ void NoteRenderer::renderGauge(SDL_Renderer* ren, double gaugeValue, int gaugeOp
             }
             const int numLen = (int)strlen(buf);
 
-            // 描画サイズ: 高さをゲージ高さに合わせ、幅はアスペクト比で決定
-            const int dH  = (dGH > 0) ? dGH : srcCH;
+            // 描画サイズ: 高さをゲージ高さに合わせ、幅はアスペクト比で決定。
+            // GAUGE_NUM_SCALE(%) でさらにスケーリング。100=そのまま、50=半分。
+            const int dH  = (srcCH > 0)
+                ? (srcCH * Config::GAUGE_NUM_SCALE / 100)
+                : srcCH;
             const int dW  = (srcCH > 0) ? (srcCW * dH / srcCH) : srcCW;
 
-            // X起点: 1P/2P独立設定
+            // GAUGE_NUM_ALIGN: 0=左揃え, 1=中央揃え, 2=右揃え
+            // numX は揃えの基準点（左端/中心/右端）として解釈される。
             const int numX = (Config::PLAY_SIDE == 1) ? Config::GAUGE_NUM_X_1P : Config::GAUGE_NUM_X_2P;
             const int numY = gY + Config::GAUGE_NUM_Y_OFFSET;
+            const int totalTextW = numLen * dW;
+            int drawStartX;
+            switch (Config::GAUGE_NUM_ALIGN) {
+                case 1:  drawStartX = numX - totalTextW / 2; break; // 中央揃え
+                case 2:  drawStartX = numX - totalTextW;     break; // 右揃え
+                default: drawStartX = numX;                  break; // 左揃え (0)
+            }
 
             SDL_SetTextureAlphaMod(numTex.texture, 220);
             for (int ci = 0; ci < numLen; ci++) {
@@ -813,13 +1005,45 @@ void NoteRenderer::renderGauge(SDL_Renderer* ren, double gaugeValue, int gaugeOp
                 if (colIdx < 0) continue;
 
                 SDL_Rect src = { colIdx * srcCW, 0, srcCW, srcCH };
-                SDL_Rect dst = { numX + ci * dW,  numY, dW, dH };
+                SDL_Rect dst = { drawStartX + ci * dW, numY, dW, dH };
                 SDL_RenderCopy(ren, numTex.texture, &src, &dst);
             }
             SDL_SetTextureAlphaMod(numTex.texture, 255);
         }
     }
     // ────────────────────────────────────────────────────────────────────────
+}
+
+void NoteRenderer::renderGaugeUp(SDL_Renderer* ren, double gaugeValue, uint32_t now) {
+    if (Config::GAUGE_UP_SHOW == 0 || !texGaugeUp) return;
+    bool is2P = (Config::PLAY_SIDE == 2);
+
+    // 初回フレームは基準値だけ設定してスキップ
+    if (gaugeUpLastValue_ < 0.0) {
+        gaugeUpLastValue_ = gaugeValue;
+        return;
+    }
+
+    // 2% 区切りをまたいで上昇したらフラッシュ開始
+    int curTick  = (int)(gaugeValue       / 2.0);
+    int prevTick = (int)(gaugeUpLastValue_ / 2.0);
+    if (curTick > prevTick) {
+        gaugeUpEndMs_ = now + 500; // 0.5秒
+    }
+    gaugeUpLastValue_ = gaugeValue;
+
+    if (now >= gaugeUpEndMs_) return; // 未発火 or 終了済み
+
+    // 2f周期(≈33ms)で点滅: 前半16ms=ON, 後半17ms=OFF
+    if ((now % 33) >= 16) return;
+
+    int scale = is2P ? Config::GAUGE_UP_SCALE_2P : Config::GAUGE_UP_SCALE_1P;
+    int gx    = is2P ? Config::GAUGE_UP_X_2P     : Config::GAUGE_UP_X_1P;
+    int gy    = is2P ? Config::GAUGE_UP_Y_2P     : Config::GAUGE_UP_Y_1P;
+    int dw = std::max(1, texGaugeUp.w * scale / 100);
+    int dh = std::max(1, texGaugeUp.h * scale / 100);
+    SDL_Rect dst = { gx, gy, dw, dh };
+    SDL_RenderCopy(ren, texGaugeUp.texture, nullptr, &dst);
 }
 
 void NoteRenderer::renderLoading(SDL_Renderer* ren, int current, int total, const std::string& filename) {
@@ -885,33 +1109,3 @@ void NoteRenderer::renderResult(SDL_Renderer* ren, const PlayStatus& status,
     if ((SDL_GetTicks() / 500) % 2 == 0)
         drawTextCached(ren, "PRESS ANY BUTTON TO EXIT", 640, 650, {150, 150, 150, 255}, true, true);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

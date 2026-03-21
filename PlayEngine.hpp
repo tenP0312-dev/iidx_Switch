@@ -34,6 +34,10 @@ public:
     JudgmentDisplay& getCurrentJudge() { return currentJudge; }
     uint32_t lastSoundPerLaneId[9];
 
+    double getMinBpm()    const { return minBpm_; }
+    double getMaxBpm()    const { return maxBpm_; }
+    bool   isBpmVaries()  const { return bpmVaries_; }
+
     // ★2P VS: 2P側エンジンはBGM再生をスキップ（1P側で再生するため）
     bool skipBGM = false;
 
@@ -62,6 +66,10 @@ private:
     // キー入力時に先頭から消費し、可視ノーツの soundId を上書き発音する。
     std::array<std::vector<PlayableNote>, 9> laneHiddenNotes;
     std::array<size_t, 9> hiddenSearchStart = {};
+
+    double minBpm_   = 0.0;
+    double maxBpm_   = 0.0;
+    bool   bpmVaries_ = false;
 };
 
 #endif

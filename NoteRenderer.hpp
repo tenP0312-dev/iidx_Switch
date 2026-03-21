@@ -90,6 +90,12 @@ public:
 
     void renderBackground(SDL_Renderer* ren);
     void renderLanes(SDL_Renderer* ren, double progress, int scratchStatus = 0);
+    void renderLaneDividers(SDL_Renderer* ren);
+    void renderBpm(SDL_Renderer* ren, double currentBpm, double minBpm, double maxBpm, bool bpmVaries);
+    void renderHiSpeed(SDL_Renderer* ren);
+    void renderScore(SDL_Renderer* ren, int score);
+    void updateTurntable(int scratchStatus, uint32_t now); // scratchStatus: 0=通常, 1=A, 2=B
+    void renderTurntable(SDL_Renderer* ren);
     void renderSuddenLift(SDL_Renderer* ren); // SUDDEN_PLUS/LIFTオーバーレイ（ノーツ描画後に呼ぶ）
     void renderBeatLine(SDL_Renderer* ren, double diff_y, double pixels_per_y);
     void renderHitEffect(SDL_Renderer* ren, int lane, float progress);
@@ -114,6 +120,7 @@ public:
 
     void renderGauge(SDL_Renderer* ren, double gaugeValue,
                      int gaugeOption, bool isFailed);
+    void renderGaugeUp(SDL_Renderer* ren, double gaugeValue, uint32_t now);
     void renderUI(SDL_Renderer* ren, const BMSHeader& header,
                   int fps, double bpm, int exScore);
     void renderDecisionInfo(SDL_Renderer* ren, const BMSHeader& header);
@@ -181,6 +188,16 @@ private:
                   texGaugeExHard, texGaugeHazard, texGaugeDan;
     TextureRegion texGaugeNumber;        // gauge_number.png       : 0〜9 (10等分)
     TextureRegion texGaugeNumberDetail;  // gauge_number_detail.png: .0123456789 (11等分)
+    TextureRegion texHsNumber;           // hs_number.png          : 0〜9 (10等分) BPM表示用
+    TextureRegion texScoreNumber;        // score_number.png       : 0〜9 (10等分) スコア表示用
+    TextureRegion texTurntable;          // turn_center.png        : ターンテーブル
+    TextureRegion texGaugeUp;            // gauge_up.png           : ゲージ上昇フラッシュ
+
+    double   turntableAngle_  = 0.0;    // 現在角度 (度)
+    uint32_t turntableLastMs_ = 0;      // 前フレームのタイムスタンプ
+
+    double   gaugeUpLastValue_ = -1.0;  // 前フレームのゲージ値 (2%判定用)
+    uint32_t gaugeUpEndMs_     = 0;     // フラッシュ終了タイムスタンプ
 
     void loadAndCache(SDL_Renderer* ren, TextureRegion& region, const std::string& path);
 

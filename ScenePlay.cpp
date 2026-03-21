@@ -425,43 +425,36 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
                 status.clearType = ClearType::FULL_COMBO;
                 fcEffectTriggered = true; 
                 uint32_t fcStart = SDL_GetTicks();
-                // ★修正⑥: rebuildLaneLayout() でキャッシュ済みの値を使用（再計算を廃止）
-                int baseX      = renderer.getLaneBaseX();
-                int totalWidth = renderer.getLaneTotalWidth();
                 int laneCenterX = renderer.getLaneCenterX();
+                const auto& fcNotes = engine.getNotes();
                 while (SDL_GetTicks() - fcStart < 2500) {
                     uint32_t nowFC = SDL_GetTicks();
-                    float p = std::min(1.0f, (float)(nowFC - fcStart) / 1000.0f);
 
-                    // ★修正: FCループ中も入力処理を行う。
-                    //        旧実装は SDL_PollEvent を呼ばず SDL_Delay(1) で待機するだけだったため
-                    //        Switch の入力イベントキューが詰まりフリーズしていた。
                     if (!processInput(cur_ms, nowFC, engine)) break;
 
-                    renderScene(ren, renderer, engine, bga, cur_ms, cur_y, fps, currentHeader, nowFC, 1.0);
-                    if (gradTex) {
-                        int lineY = Config::JUDGMENT_LINE_Y;
-                        int uvOffset = (int)(nowFC * 1) % TEX_H;
-                        SDL_Rect srcRect = { 0, uvOffset, 1, TEX_H / 2 };
-                        SDL_Rect dstRect = { baseX, 0, totalWidth, lineY };
-                        SDL_SetTextureBlendMode(gradTex, SDL_BLENDMODE_BLEND);
-                        SDL_SetTextureColorMod(gradTex, 0, 255, 255);
-                        SDL_SetTextureAlphaMod(gradTex, (Uint8)((1.0f - p) * 200));
-                        SDL_RenderCopy(ren, gradTex, &srcRect, &dstRect);
-                        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-                        SDL_SetRenderDrawColor(ren, 0, 255, 255, (Uint8)((1.0f - p) * 255));
-                        SDL_Rect brightLine = { baseX, lineY - 3, totalWidth, 6 };
-                        SDL_RenderFillRect(ren, &brightLine);
-                        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
+                    renderer.renderLaneDividers(ren);
+
+                    // ノーツ描画（cur_y は FC 突入時で固定）
+                    for (size_t i = drawStartIndex; i < fcNotes.size(); ++i) {
+                        const auto& n = fcNotes[i];
+                        if (!n.isBeingPressed && (double)(n.y - cur_y) > cachedMaxVisibleY_) break;
+                        if ((!n.played || n.isBeingPressed) && !n.isBGM && !n.isLN &&
+                            (double)(n.y - cur_y) > -5000.0)
+                            renderer.renderNote(ren, n, cur_y, cachedPixelsPerY_, isAutoLane(n.lane));
                     }
+                    for (size_t i = drawStartIndex; i < fcNotes.size(); ++i) {
+                        const auto& n = fcNotes[i];
+                        if (!n.isBeingPressed && (double)(n.y - cur_y) > cachedMaxVisibleY_) break;
+                        if ((!n.played || n.isBeingPressed) && !n.isBGM && n.isLN &&
+                            (double)(n.y + n.l - cur_y) > -5000.0)
+                            renderer.renderNote(ren, n, cur_y, cachedPixelsPerY_, isAutoLane(n.lane));
+                    }
+
                     SDL_Color fcColor;
                     uint32_t t = nowFC / 80;
                     if (t % 3 == 0)      fcColor = {0, 255, 255, 255};
                     else if (t % 3 == 1) fcColor = {0, 200, 255, 255};
                     else                  fcColor = {255, 255, 255, 255};
-                    // 【指摘(3-4)修正】drawText → drawTextCached
-                    // "FULL COMBO" は固定文字列。色が3パターン=最大3エントリのキャッシュで
-                    // 100%ヒットする。毎フレームの TTF_RenderUTF8_Blended(0.5~2ms)を排除。
                     renderer.drawTextCached(ren, "FULL COMBO", laneCenterX, 200, fcColor, true, true);
                     SDL_RenderPresent(ren);
 #ifdef __SWITCH__
@@ -769,10 +762,13 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
     // debugLayoutMode=true の間は BG・ノーツのみ表示（位置合わせ用）
     if (!debugLayoutMode) {
         renderer.renderUI(ren, header, fps, currentBpm, engine.getStatus().exScore);
+        renderer.renderBpm(ren, currentBpm, engine.getMinBpm(), engine.getMaxBpm(), engine.isBpmVaries());
     }
     bga.render(cur_y, ren, bgaX, bgaY, cur_ms);
-    renderer.renderLanes(ren, progress,
-        scratchUpActive ? 1 : (scratchDownActive ? 2 : 0));
+    int scratchSt = scratchUpActive ? 1 : (scratchDownActive ? 2 : 0);
+    renderer.updateTurntable(scratchSt, now);
+    renderer.renderTurntable(ren);
+    renderer.renderLanes(ren, progress, scratchSt);
 
     // pixels_per_y: 1Yユニットあたりのピクセル数（BPM非依存の定数）
     // ハイスピード・画面サイズで決まる唯一の定数。これを軸に全描画が決まる。
@@ -840,6 +836,7 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
 
     // ゲージは debugLayoutMode 中も常時表示
     renderer.renderGauge(ren, engine.getStatus().gauge, Config::GAUGE_OPTION, engine.getStatus().isFailed);
+    renderer.renderGaugeUp(ren, engine.getStatus().gauge, now);
 
     if (!debugLayoutMode) {
         // エフェクト(キービーム) → ボムの順で描画 (ノーツより前面)
@@ -866,7 +863,7 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
 
         if (startButtonPressed) {
             double hs = std::max(0.01, Config::HIGH_SPEED);
-            int effectiveHeight = Config::JUDGMENT_LINE_Y - Config::SUDDEN_PLUS;
+            int effectiveHeight = std::max(1, Config::JUDGMENT_LINE_Y - Config::LIFT - Config::SUDDEN_PLUS);
             auto calcSyncGN = [&](double bpm) {
                 return (int)((Config::HS_BASE / (hs * bpm)) * (double)effectiveHeight / Config::JUDGMENT_LINE_Y);
             };
@@ -1195,6 +1192,14 @@ void ScenePlay::renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
 
     renderer.renderCombo(ren, engine.getStatus().combo);
     renderer.renderGauge(ren, engine.getStatus().gauge, Config::GAUGE_OPTION, engine.getStatus().isFailed);
+    renderer.renderGaugeUp(ren, engine.getStatus().gauge, now);
+
+    // VS モード: スコア・HS・BPM・ターンテーブルを各プレイヤー側で描画
+    double vsCurrentBpm = engine.getBpmFromMs(cur_ms);
+    renderer.renderUI(ren, header, fps, vsCurrentBpm, engine.getStatus().exScore);
+    renderer.renderBpm(ren, vsCurrentBpm, engine.getMinBpm(), engine.getMaxBpm(), engine.isBpmVaries());
+    renderer.updateTurntable(scratchStatus, now);
+    renderer.renderTurntable(ren);
 
     if (ps.isPlayerFailed) {
         int cx = renderer.getLaneCenterX();

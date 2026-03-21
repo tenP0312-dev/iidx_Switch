@@ -31,8 +31,9 @@ namespace Config {
     //    BGAは中心座標を指定。アスペクト比を保ったまま高さ512pxに自動スケール。
     //    1P: レーン右側の空白中央  2P: レーン左側の空白中央
     static constexpr int BGA_CENTER_X_1P = 820; // 1P BGA中心X (px)  ← (512+462+50+1280)/2 ≒ 871
-    static constexpr int BGA_CENTER_X_2P = 690; // 2P BGA中心X (px)  ← 1280 - BGA_CENTER_X_1P
-    inline int BGA_CENTER_Y = 340; // BGA中心Y (px) ← この値を変えるとBGAのY位置が変わる
+    static constexpr int BGA_CENTER_X_2P = 460; // 2P BGA中心X (px)  ← 1280 - BGA_CENTER_X_1P = 460
+    inline int BGA_CENTER_Y  = 340; // BGA中心Y (px) ← この値を変えるとBGAのY位置が変わる (config.hpp のみ)
+    inline int BGA_HEIGHT    = 547; // BGA表示高さ (px) ← アスペクト比を保って横幅も自動スケール (config.hpp のみ)
 
     //  【プログレスバー】
     //    1P: レーン左端の外側  2P: レーン右端の外側
@@ -44,7 +45,7 @@ namespace Config {
     //    X: 1P/2P それぞれ指定。W: 幅指定
     //    Y: 画面下端から GAUGE_BOTTOM_MARGIN 上
     static constexpr int GAUGE_X_1P         = 30;  // 1P ゲージ左端X (px)  ← LANE_BASE_X_1P と合わせると自然
-    static constexpr int GAUGE_X_2P         = 749; // 2P ゲージ左端X (px)  ← 2Pレーン左端に合わせる
+    static constexpr int GAUGE_X_2P         = 949; // 2P ゲージ左端X (px)  ← 1280-GAUGE_X_1P-GAUGE_W = 949
     static constexpr int GAUGE_W            = 301; // ゲージ幅 (px)        ← 総レーン幅+10 = 472
     static constexpr int GAUGE_BOTTOM_MARGIN = 101; // 画面下端からゲージ下端までの距離 (px)
 
@@ -88,11 +89,16 @@ namespace Config {
 
     // ゲージ％数字表示設定
     // GAUGE_NUM_SHOW: 0=非表示, 1=整数(GAUGE_DISPLAY_TYPEに従う), 2=小数(0.1%刻み, gauge_number_detail使用)
-    // GAUGE_NUM_X: 数字左端のX座標。1P/2Pで独立して設定（スクリーン絶対座標）
+    // GAUGE_NUM_X: 数字の基準X座標。1P/2Pで独立して設定（スクリーン絶対座標）
+    // GAUGE_NUM_ALIGNにより左端/中心/右端として解釈される
     inline int GAUGE_NUM_SHOW = 1;
-    inline int GAUGE_NUM_X_1P = 70;   // 1P 数字表示 左端X (px)
-    inline int GAUGE_NUM_X_2P = 751;  // 2P 数字表示 左端X (px)
-    inline int GAUGE_NUM_Y_OFFSET = -16; // ゲージ上端からのYオフセット (px、負=ゲージより上)
+    inline int GAUGE_NUM_X_1P = 324;   // 1P 数字表示 左端X (px)
+    inline int GAUGE_NUM_X_2P = 1024; // 2P 数字表示 右揃え基準X (px)  ← 2Pゲージ右端1250-7px
+    inline int GAUGE_NUM_Y_OFFSET = -20; // ゲージ上端からのYオフセット (px、負=ゲージより上)
+    // GAUGE_NUM_ALIGN: 0=左揃え, 1=中央揃え, 2=右揃え
+    inline int GAUGE_NUM_ALIGN = 2;
+    // GAUGE_NUM_SCALE: 数字の表示サイズ (%)。100=画像そのまま、50=半分
+    inline int GAUGE_NUM_SCALE = 80;
     // 【追加】段位ゲージ開始％設定
     inline int DAN_GAUGE_START_PERCENT = 100;
 
@@ -101,9 +107,91 @@ namespace Config {
     inline int VISUAL_OFFSET = 0; // 表示オフセット(px): ノーツの見た目位置だけをずらす。JUDGE_OFFSETと独立。
     inline int SHOW_FAST_SLOW = 1; // FAST/SLOW表示: 0=OFF, 1=ON, 2=DETAIL(ms表示)
 
-    // --- ボム演出設定 ---
+    // --- フォントサイズ設定 (config.hpp のみ / config.txt には保存されない) ---
+    // 数値を直接変更してください (単位: px)
+    inline int FONT_SIZE_SMALL = 24; // 小テキスト用フォントサイズ (px) — HUD情報・ヒント文字など
+    inline int FONT_SIZE_BIG   = 48; // 大テキスト用フォントサイズ (px) — シーンタイトル・判定テキストなど
+
+    // --- ゲージ上昇フラッシュ設定 (config.hpp のみ / config.txt には保存されない) ---
+    // gauge_up.png を使用。2%回復ごとに0.5秒・2f周期で点滅表示。
+    // GAUGE_UP_X/Y: 画像左上座標 (1P/2P独立)
+    inline int GAUGE_UP_SHOW    = 1;
+    inline int GAUGE_UP_X_1P   = 316;  // 1P: 左上X座標
+    inline int GAUGE_UP_Y_1P   = 610;  // 1P: 左上Y座標
+    inline int GAUGE_UP_SCALE_1P = 90; // 1P: 拡大率(%)
+    inline int GAUGE_UP_X_2P   = 964;  // 2P: 左上X座標 (1280-GAUGE_UP_X_1P = 964)
+    inline int GAUGE_UP_Y_2P   = 610;  // 2P: 左上Y座標
+    inline int GAUGE_UP_SCALE_2P = 90; // 2P: 拡大率(%)
+
+    // --- ボム演出設定 (config.hpp のみ / config.txt には保存されない) ---
     inline int BOMB_DURATION_MS = 300; // ボム1発の表示時間(ms) 50〜1000
-    inline int BOMB_SIZE_FACTOR = 420; // ボムサイズ係数: ll.w[lane] * BOMB_SIZE_FACTOR / 100
+    inline int BOMB_SIZE        = 140; // ボム表示サイズ (px) — 全レーン共通
+
+    // --- ターンテーブル設定 (config.hpp のみ / config.txt には保存されない) ---
+    // turn_center.png を使用。中心座標・拡大率指定。1P/2P独立。
+    // SCALE: 100=元サイズ, 200=2倍
+    // SPEED: 上限なし。10=360deg/sec(毎秒1回転順方向), 負=逆。0=停止 (1P/2P共通)
+    inline int TURNTABLE_SHOW         = 1;
+    inline int TURNTABLE_X_1P        = 59;   // 1P: 中心X座標 (スクラッチ上)
+    inline int TURNTABLE_Y_1P        = 530;  // 1P: 中心Y座標
+    inline int TURNTABLE_SCALE_1P    = 100;  // 1P: 拡大率(%)
+    inline int TURNTABLE_X_2P        = 1221; // 2P: 中心X座標 (1280-59=1221, 2Pスクラッチ上)
+    inline int TURNTABLE_Y_2P        = 530;  // 2P: 中心Y座標
+    inline int TURNTABLE_SCALE_2P    = 100;  // 2P: 拡大率(%)
+    inline int TURNTABLE_SPEED_NORMAL = 1;   // 通常時 (1P/2P共通)
+    inline int TURNTABLE_SPEED_A      = 8;   // スクラッチA押下時
+    inline int TURNTABLE_SPEED_B      = -8;  // スクラッチB押下時
+
+    // --- ハイスピード表示設定 (config.hpp のみ / config.txt には保存されない) ---
+    // hs_number.png を使用。HIGH_SPEED*100 を整数表示 (例: ×2.50 → "250")
+    // ALIGN: 0=左揃え, 1=中央揃え, 2=右揃え
+    inline int HS_DISP_SHOW     = 1;
+    inline int HS_DISP_ALIGN_1P = 1;    // 1P: 中央揃え
+    inline int HS_DISP_SCALE_1P = 100;  // 1P: 拡大率(%)
+    inline int HS_DISP_X_1P    = 276;   // 1P: 基準X座標
+    inline int HS_DISP_Y_1P    = 638;   // 1P: Y座標
+    inline int HS_DISP_ALIGN_2P = 1;    // 2P: 中央揃え (中央揃えはそのまま)
+    inline int HS_DISP_SCALE_2P = 100;  // 2P: 拡大率(%)
+    inline int HS_DISP_X_2P    = 1004;  // 2P: 基準X座標 (1280-276=1004)
+    inline int HS_DISP_Y_2P    = 638;   // 2P: Y座標
+
+    // --- スコア表示設定 (config.hpp のみ / config.txt には保存されない) ---
+    // SCORE_ALIGN: 0=左揃え, 1=中央揃え, 2=右揃え (SCORE_X を基準点として解釈)
+    // 2P: 右揃え (数字は右寄せ)
+    inline int SCORE_SHOW     = 1;
+    inline int SCORE_ALIGN_1P = 2;    // 1P: 右揃え
+    inline int SCORE_SCALE_1P = 100;  // 1P: 拡大率(%)
+    inline int SCORE_X_1P    = 215;   // 1P: 基準X座標 (右端)
+    inline int SCORE_Y_1P    = 637;   // 1P: Y座標
+    inline int SCORE_ALIGN_2P = 0;    // 2P: 右揃え
+    inline int SCORE_SCALE_2P = 100;  // 2P: 拡大率(%)
+    inline int SCORE_X_2P    = 1066;  // 2P: 基準X座標 (1280-215=1065)
+    inline int SCORE_Y_2P    = 637;   // 2P: Y座標
+
+    // --- BPM表示設定 (config.hpp のみ / config.txt には保存されない) ---
+    // BPM_ALIGN: 0=左揃え, 1=中央揃え, 2=右揃え
+    // BPM_SHOW_MINMAX: 0=変化なし曲ではMIN/MAX非表示, 1=常に表示
+    // 2P: CUR/MIN/MAXは中央揃えのまま左右反転
+    inline int BPM_SHOW         = 1;
+    inline int BPM_SHOW_MINMAX  = 0;  // 0=変化なし曲では非表示, 1=常に表示
+    inline int BPM_ALIGN_1P        = 1;   // 1P: 中央揃え
+    inline int BPM_SCALE_1P        = 100; // 1P: 現在BPM表示サイズ(%)
+    inline int BPM_MINMAX_SCALE_1P = 70;  // 1P: MIN/MAX表示サイズ(%)
+    inline int BPM_CUR_X_1P        = 819; // 1P: 現在BPM 基準X
+    inline int BPM_CUR_Y_1P        = 648; // 1P: 現在BPM Y
+    inline int BPM_MIN_X_1P        = 754; // 1P: MIN BPM 基準X
+    inline int BPM_MIN_Y_1P        = 655; // 1P: MIN BPM Y
+    inline int BPM_MAX_X_1P        = 885; // 1P: MAX BPM 基準X
+    inline int BPM_MAX_Y_1P        = 655; // 1P: MAX BPM Y
+    inline int BPM_ALIGN_2P        = 1;   // 2P: 中央揃え (中央揃えはそのまま)
+    inline int BPM_SCALE_2P        = 100; // 2P: 現在BPM表示サイズ(%)
+    inline int BPM_MINMAX_SCALE_2P = 70;  // 2P: MIN/MAX表示サイズ(%)
+    inline int BPM_CUR_X_2P        = 461; // 2P: 現在BPM 基準X (1280-819=461)
+    inline int BPM_CUR_Y_2P        = 648; // 2P: 現在BPM Y
+    inline int BPM_MIN_X_2P        = 526; // 2P: MIN BPM 基準X (1280-754=526, CURの右)
+    inline int BPM_MIN_Y_2P        = 655; // 2P: MIN BPM Y
+    inline int BPM_MAX_X_2P        = 395; // 2P: MAX BPM 基準X (1280-885=395, CURの左)
+    inline int BPM_MAX_Y_2P        = 655; // 2P: MAX BPM Y
 
     // --- 【追加】システム設定 ---
     inline int START_UP_OPTION = 1; // 0: Title, 1: Select (デフォルト選曲画面)
@@ -223,8 +311,6 @@ namespace Config {
         int    JUDGE_OFFSET;
         int    VISUAL_OFFSET;
         int    SHOW_FAST_SLOW;
-        int    BOMB_DURATION_MS;
-        int    BOMB_SIZE_FACTOR;
         int    START_UP_OPTION;
         int    FOLDER_NOTES_MIN;
         int    FOLDER_NOTES_MAX;
@@ -266,8 +352,6 @@ namespace Config {
         s.JUDGE_OFFSET           = JUDGE_OFFSET;
         s.VISUAL_OFFSET          = VISUAL_OFFSET;
         s.SHOW_FAST_SLOW         = SHOW_FAST_SLOW;
-        s.BOMB_DURATION_MS       = BOMB_DURATION_MS;
-        s.BOMB_SIZE_FACTOR       = BOMB_SIZE_FACTOR;
         s.START_UP_OPTION        = START_UP_OPTION;
         s.FOLDER_NOTES_MIN       = FOLDER_NOTES_MIN;
         s.FOLDER_NOTES_MAX       = FOLDER_NOTES_MAX;
@@ -345,8 +429,6 @@ namespace Config {
                 else if (key == "JUDGE_OFFSET") JUDGE_OFFSET = std::stoi(val);
                 else if (key == "VISUAL_OFFSET") VISUAL_OFFSET = std::stoi(val);
                 else if (key == "SHOW_FAST_SLOW") SHOW_FAST_SLOW = std::stoi(val);
-                else if (key == "BOMB_DURATION_MS") BOMB_DURATION_MS = std::stoi(val);
-                else if (key == "BOMB_SIZE_FACTOR") BOMB_SIZE_FACTOR = std::stoi(val);
                 else if (key == "START_UP_OPTION") START_UP_OPTION = std::stoi(val);
                 else if (key == "FOLDER_NOTES_MIN") FOLDER_NOTES_MIN = std::stoi(val);
                 else if (key == "FOLDER_NOTES_MAX") FOLDER_NOTES_MAX = std::stoi(val);
@@ -419,8 +501,6 @@ namespace Config {
         file << "JUDGE_OFFSET="           << s.JUDGE_OFFSET           << "\n";
         file << "VISUAL_OFFSET="          << s.VISUAL_OFFSET          << "\n";
         file << "SHOW_FAST_SLOW="         << s.SHOW_FAST_SLOW         << "\n";
-        file << "BOMB_DURATION_MS="       << s.BOMB_DURATION_MS       << "\n";
-        file << "BOMB_SIZE_FACTOR="       << s.BOMB_SIZE_FACTOR       << "\n";
         file << "START_UP_OPTION="        << s.START_UP_OPTION        << "\n";
         file << "FOLDER_NOTES_MIN="       << s.FOLDER_NOTES_MIN       << "\n";
         file << "FOLDER_NOTES_MAX="       << s.FOLDER_NOTES_MAX       << "\n";
@@ -485,5 +565,7 @@ namespace Config {
     }
 }
 #endif
+
+
 
 

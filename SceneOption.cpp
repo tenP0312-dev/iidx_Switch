@@ -91,7 +91,7 @@ void SceneOption::updateItemList() {
     // Index 16: BOMB DURATION  (以前の15から+1)
     items.emplace_back("[ BOMB DURATION (ms) ]", getValStr(std::to_string(Config::BOMB_DURATION_MS), 16));
     // Index 17: BOMB SIZE  (以前の16から+1)
-    items.emplace_back("[ BOMB SIZE ]", getValStr(std::to_string(Config::BOMB_SIZE_FACTOR), 17));
+    items.emplace_back("[ BOMB SIZE (px) ]", getValStr(std::to_string(Config::BOMB_SIZE), 17));
 
     // Index 18: Section  (以前の17から+1)
     items.emplace_back("--- [ FOLDER SETTINGS ] ---", "");
@@ -241,16 +241,16 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     if (targetVar < 50) targetVar = 50;
                     if (targetVar > 1000) targetVar = 1000;
                 }
-                else if (cursor == 17) { // BOMB SIZE  (以前の16から+1)
-                    int& targetVar = Config::BOMB_SIZE_FACTOR;
-                    if (btn == Config::SYS_BTN_UP) targetVar += 50;
-                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 50;
-                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 10;
-                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 10;
+                else if (cursor == 17) { // BOMB SIZE (px)
+                    int& targetVar = Config::BOMB_SIZE;
+                    if (btn == Config::SYS_BTN_UP) targetVar += 10;
+                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 10;
+                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 1;
+                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 1;
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
-                    if (targetVar < 100) targetVar = 100;
-                    if (targetVar > 2000) targetVar = 2000;
+                    if (targetVar < 10) targetVar = 10;
+                    if (targetVar > 500) targetVar = 500;
                 }
                 else if (cursor >= 19 && cursor <= 24) { // FOLDERS  (以前の18-23から+1)
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN) {
