@@ -40,88 +40,84 @@ double ChartProjector::getMsFromY(int64_t target_y) const {
     return total_ms;
 }
 
-int64_t ChartProjector::getYFromMs(double cur_ms) const {
-    if (!bmsData) return 0;
-    double res = bmsData->header.resolution;
-    if (cur_ms < 0) return (int64_t)(cur_ms * (bmsData->header.bpm * res / 60000.0));
+// ────────────────────────────────────────────────────────────────────────────
+// カーソルキャッシュ実装
+// ゲームループで毎フレーム呼ばれる getYFromMs / getBpmFromMs 専用。
+// cur_ms は単調増加を前提とし、前回位置から前進するだけなので O(1) 相当。
+// 後退（シーク等）時は先頭からリセットする。
+// ────────────────────────────────────────────────────────────────────────────
 
-    double elapsed_ms = 0, current_bpm = bmsData->header.bpm;
-    int64_t current_y = 0;
+void ChartProjector::resetCursor() const {
+    cur_ms_     = -1e18;
+    elapsed_ms_ = 0.0;
+    cursor_y_   = 0;
+    cursor_bpm_ = bmsData ? bmsData->header.bpm : 0.0;
+    cursor_bi_  = 0;
+    cursor_si_  = 0;
+    in_stop_    = false;
+}
+
+void ChartProjector::advanceCursor(double cur_ms) const {
+    if (!bmsData) return;
+    if (cur_ms == cur_ms_) return; // 同一時刻は再計算しない
+
+    if (cur_ms < cur_ms_) resetCursor(); // 後退: 先頭から再スキャン
 
     const auto& bpms  = bmsData->bpm_events;
     const auto& stops = bmsData->stop_events;
-    size_t bi = 0, si = 0;
+    const double res  = bmsData->header.resolution;
 
-    while (bi < bpms.size() || si < stops.size()) {
+    in_stop_ = false;
+
+    while (cursor_bi_ < bpms.size() || cursor_si_ < stops.size()) {
         int64_t next_y = INT64_MAX;
         bool isBpm = false, isStop = false;
-        if (bi < bpms.size()  && bpms[bi].y  <= next_y) { next_y = bpms[bi].y;  isBpm  = true; isStop = false; }
-        if (si < stops.size() && stops[si].y  <  next_y) { next_y = stops[si].y; isBpm  = false; isStop = true; }
-        if (si < stops.size() && stops[si].y == next_y && isBpm) isStop = true;
+        if (cursor_bi_ < bpms.size()  && bpms[cursor_bi_].y  <= next_y) { next_y = bpms[cursor_bi_].y;  isBpm  = true; isStop = false; }
+        if (cursor_si_ < stops.size() && stops[cursor_si_].y  <  next_y) { next_y = stops[cursor_si_].y; isBpm  = false; isStop = true;  }
+        if (cursor_si_ < stops.size() && stops[cursor_si_].y == next_y && isBpm) isStop = true;
 
-        // current_y → next_y の時間
-        double step = (res > 0 && current_bpm > 0)
-            ? (double)(next_y - current_y) * (60000.0 / (current_bpm * res))
+        double step = (res > 0 && cursor_bpm_ > 0)
+            ? (double)(next_y - cursor_y_) * (60000.0 / (cursor_bpm_ * res))
             : 0.0;
 
-        if (elapsed_ms + step > cur_ms) break;
-        elapsed_ms += step;
-        current_y = next_y;
+        if (elapsed_ms_ + step > cur_ms) break; // このセグメント内で cur_ms に到達
 
-        if (isBpm && bi < bpms.size() && bpms[bi].y == next_y) {
-            current_bpm = bpms[bi].bpm;
-            ++bi;
+        elapsed_ms_ += step;
+        cursor_y_    = next_y;
+
+        if (isBpm && cursor_bi_ < bpms.size() && bpms[cursor_bi_].y == next_y) {
+            cursor_bpm_ = bpms[cursor_bi_].bpm;
+            ++cursor_bi_;
         }
-        if (isStop && si < stops.size() && stops[si].y == next_y) {
-            double stop_dur = stops[si].duration_ms;
-            if (elapsed_ms + stop_dur > cur_ms) {
-                // STOP 中なので y は動かない
-                return current_y;
+        if (isStop && cursor_si_ < stops.size() && stops[cursor_si_].y == next_y) {
+            double stop_dur = stops[cursor_si_].duration_ms;
+            if (elapsed_ms_ + stop_dur > cur_ms) {
+                in_stop_ = true; // STOP 区間内
+                break;
             }
-            elapsed_ms += stop_dur;
-            ++si;
+            elapsed_ms_ += stop_dur;
+            ++cursor_si_;
         }
     }
-    if (res <= 0 || current_bpm <= 0) return current_y;
-    return current_y + (int64_t)((cur_ms - elapsed_ms) * (current_bpm * res / 60000.0));
+    cur_ms_ = cur_ms;
+}
+
+int64_t ChartProjector::getYFromMs(double cur_ms) const {
+    if (!bmsData) return 0;
+    const double res = bmsData->header.resolution;
+    if (cur_ms < 0) return (int64_t)(cur_ms * (bmsData->header.bpm * res / 60000.0));
+
+    advanceCursor(cur_ms);
+    if (in_stop_) return cursor_y_;
+    if (res <= 0 || cursor_bpm_ <= 0) return cursor_y_;
+    return cursor_y_ + (int64_t)((cur_ms - elapsed_ms_) * (cursor_bpm_ * res / 60000.0));
 }
 
 double ChartProjector::getBpmFromMs(double cur_ms) const {
     if (!bmsData) return 120.0;
     if (cur_ms < 0) return bmsData->header.bpm;
-    double elapsed_ms = 0, current_bpm = bmsData->header.bpm, res = bmsData->header.resolution;
-    int64_t current_y = 0;
-
-    const auto& bpms  = bmsData->bpm_events;
-    const auto& stops = bmsData->stop_events;
-    size_t bi = 0, si = 0;
-
-    while (bi < bpms.size() || si < stops.size()) {
-        int64_t next_y = INT64_MAX;
-        bool isBpm = false, isStop = false;
-        if (bi < bpms.size()  && bpms[bi].y  <= next_y) { next_y = bpms[bi].y;  isBpm  = true; isStop = false; }
-        if (si < stops.size() && stops[si].y  <  next_y) { next_y = stops[si].y; isBpm  = false; isStop = true; }
-        if (si < stops.size() && stops[si].y == next_y && isBpm) isStop = true;
-
-        double step = (res > 0 && current_bpm > 0)
-            ? (double)(next_y - current_y) * (60000.0 / (current_bpm * res))
-            : 0.0;
-        if (elapsed_ms + step > cur_ms) break;
-        elapsed_ms += step;
-        current_y = next_y;
-
-        if (isBpm && bi < bpms.size() && bpms[bi].y == next_y) {
-            current_bpm = bpms[bi].bpm;
-            ++bi;
-        }
-        if (isStop && si < stops.size() && stops[si].y == next_y) {
-            double stop_dur = stops[si].duration_ms;
-            if (elapsed_ms + stop_dur > cur_ms) return current_bpm;
-            elapsed_ms += stop_dur;
-            ++si;
-        }
-    }
-    return current_bpm;
+    advanceCursor(cur_ms);
+    return cursor_bpm_;
 }
 
 // 【追加】既存の getMsFromY を利用して全データに時間情報を付与する

@@ -90,7 +90,7 @@ $(BUILD)/$(TARGET).elf: $(OBJS)
 
 # NRO 生成
 $(BUILD)/$(TARGET).nro: $(BUILD)/$(TARGET).elf
-	$(NACPTOOL) --create "GeminiRhythm" "User" "1.0.0" $(BUILD)/$(TARGET).nacp
+	$(NACPTOOL) --create "BMSWITCH" "User" "1.0.0" $(BUILD)/$(TARGET).nacp
 	$(ELF2NRO) $< $@ --icon=$(ICON) --nacp=$(BUILD)/$(TARGET).nacp
 
 # 実行ファイル生成 (Mac)

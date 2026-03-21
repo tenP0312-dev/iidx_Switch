@@ -494,11 +494,9 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     snd.clear();
     bga.cleanup();
 
-    // 【CRITICAL-3修正】Config::saveAsync() はバックグラウンドスレッドで書き込むため
-    // メインスレッドをブロックしない。旧 save() の 100ms スパイクが解消される。
-    Config::markDirty();
-    Config::saveAsync();
-    if (isAborted) return false; 
+    // シーン終了時に同期保存（ゲームループ外なのでブロックしても問題なし）
+    Config::save();
+    if (isAborted) return false;
     return true;
 }
 
@@ -1128,13 +1126,16 @@ void ScenePlay::renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
                                    const BMSHeader& header) {
     renderer.switchSide(side);
 
-    // プレイヤー別のSUD+/LIFTをConfigに一時反映
-    int savedSudden = Config::SUDDEN_PLUS;
-    int savedLift   = Config::LIFT;
-    double savedHS  = Config::HIGH_SPEED;
-    Config::SUDDEN_PLUS = ps.suddenPlus;
-    Config::LIFT        = ps.lift;
-    Config::HIGH_SPEED  = ps.highSpeed;
+    // プレイヤー別のSUD+/LIFT/HSをConfigに一時反映（スコープ終了時に自動復元）
+    struct ConfigGuard {
+        int savedSudden, savedLift;
+        double savedHS;
+        ConfigGuard(int s, int l, double hs)
+            : savedSudden(Config::SUDDEN_PLUS), savedLift(Config::LIFT), savedHS(Config::HIGH_SPEED)
+        { Config::SUDDEN_PLUS = s; Config::LIFT = l; Config::HIGH_SPEED = hs; }
+        ~ConfigGuard()
+        { Config::SUDDEN_PLUS = savedSudden; Config::LIFT = savedLift; Config::HIGH_SPEED = savedHS; }
+    } guard(ps.suddenPlus, ps.lift, ps.highSpeed);
 
     double pixels_per_y = (ps.highSpeed * 60000.0) / (475.0 * header.resolution);
     double max_visible_y = (double)Config::VISIBLE_PX / std::max(1e-9, pixels_per_y) + 1000.0;
@@ -1206,10 +1207,7 @@ void ScenePlay::renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
         renderer.drawTextCached(ren, "FAILED", cx, 300, {255, 50, 50, 255}, true, true);
     }
 
-    Config::SUDDEN_PLUS = savedSudden;
-    Config::LIFT        = savedLift;
-    Config::HIGH_SPEED  = savedHS;
-}
+} // ConfigGuard デストラクタがここで自動復元
 
 bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
                        const std::string& path1P, const std::string& path2P) {
@@ -1441,9 +1439,8 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
 
     snd.clear();
     bga.cleanup();
-    // 【CRITICAL-3修正】非同期保存
-    Config::markDirty();
-    Config::saveAsync();
+    // シーン終了時に同期保存（ゲームループ外なのでブロックしても問題なし）
+    Config::save();
     if (isAborted) return false;
     return true;
 }

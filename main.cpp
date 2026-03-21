@@ -404,9 +404,8 @@ int main(int argc, char* argv[]) {
         if (quitApp) break;
     }
 
-    // 【CRITICAL-3修正】アプリ終了前に未書き込みの設定を確実に保存する。
-    // saveAsync() のスレッドが動いている場合は完了を待つ。
-    Config::flushSave();
+    // アプリ終了前に未書き込みの設定を確実に保存する
+    Config::saveSync();
 
     if (joy) SDL_JoystickClose(joy);
     renderer.cleanup();

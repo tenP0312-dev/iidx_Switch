@@ -278,20 +278,21 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
     SDL_RenderClear(ren);
 
     if (state == OptionState::SELECTING_ITEM || (state == OptionState::ADJUSTING_VALUE && cursor != 7 && cursor != 8)) {
-        renderer.drawText(ren, "SETTINGS", 640, 80, { 255, 255, 255, 255 }, true, true);
+        renderer.drawTextCached(ren, "SETTINGS", 640, 80, { 255, 255, 255, 255 }, true, true);
         int maxVisible = 10;
         int scrollOffset = (cursor >= maxVisible) ? cursor - (maxVisible - 1) : 0;
+        char rowBuf[256];
         for (int i = 0; i < maxVisible && (i + scrollOffset) < (int)items.size(); ++i) {
             int idx = i + scrollOffset;
             SDL_Color color = (idx == (int)cursor) ? SDL_Color{ 0, 255, 255, 255 } : SDL_Color{ 150, 150, 150, 255 };
             if (items[idx].label.find("---") != std::string::npos) color = { 80, 80, 120, 255 };
             else if (state == OptionState::ADJUSTING_VALUE && idx == cursor) color = { 255, 255, 0, 255 };
-            renderer.drawText(ren, items[idx].label + "  " + items[idx].current_value, 640, 160 + i * 45, color, true, true);
+            snprintf(rowBuf, sizeof(rowBuf), "%s  %s", items[idx].label.c_str(), items[idx].current_value.c_str());
+            renderer.drawTextCached(ren, rowBuf, 640, 160 + i * 45, color, true, true);
         }
         if (state == OptionState::ADJUSTING_VALUE) {
-            renderer.drawText(ren, "ADJUSTING: PRESS DECIDE TO CONFIRM", 640, 620, {255, 255, 0, 255}, true, true);
-            // ★変更: ヘルプテキストにcursor==14(LN TYPE)の説明を追加、cursor番号を+1修正
-            std::string helpText;
+            renderer.drawTextCached(ren, "ADJUSTING: PRESS DECIDE TO CONFIRM", 640, 620, {255, 255, 0, 255}, true, true);
+            const char* helpText;
             if (cursor == 5 || cursor == 6 || cursor == 11 || cursor == 12 || cursor == 16 || cursor == 17)
                 helpText = "SYS-UP/DOWN: +-5  SYS-L/R: +-1";
             else if (cursor == 13)
@@ -300,19 +301,19 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                 helpText = "SYS-L/R or UP/DOWN: CN / HCN / LN";
             else
                 helpText = "SYS-UDLR TO SWITCH TYPE";
-            renderer.drawText(ren, helpText, 640, 670, {120, 120, 120, 255}, true, true);
+            renderer.drawTextCached(ren, helpText, 640, 670, {120, 120, 120, 255}, true, true);
         } else if ((cursor >= 5 && cursor <= 17) || (cursor >= 19 && cursor <= 24)) {
-            renderer.drawText(ren, "PRESS DECIDE TO ADJUST", 640, 670, {150, 150, 150, 255}, true, true);
+            renderer.drawTextCached(ren, "PRESS DECIDE TO ADJUST", 640, 670, {150, 150, 150, 255}, true, true);
         }
-    } 
+    }
     else if (state == OptionState::ADJUSTING_VALUE && (cursor == 7 || cursor == 8)) {
-        renderer.drawText(ren, items[cursor].label, 640, 60, { 255, 255, 0, 255 }, true, true);
-        renderer.drawText(ren, items[cursor].current_value, 640, 110, { 255, 255, 255, 255 }, true, true);
+        renderer.drawTextCached(ren, items[cursor].label.c_str(), 640, 60, { 255, 255, 0, 255 }, true, true);
+        renderer.drawTextCached(ren, items[cursor].current_value.c_str(), 640, 110, { 255, 255, 255, 255 }, true, true);
 
         SDL_Rect bgaRect = { 320, 180, 640, 480 };
         SDL_SetRenderDrawColor(ren, 40, 40, 40, 255);
         SDL_RenderFillRect(ren, &bgaRect);
-        renderer.drawText(ren, "BGA AREA", 640, 420, {60, 60, 60, 255}, true, true);
+        renderer.drawTextCached(ren, "BGA AREA", 640, 420, {60, 60, 60, 255}, true, true);
 
         int previewCenterY = 400;
         int previewWidth = (Config::AC_KEY_WHITE * 4 + Config::AC_KEY_BLACK * 3) + Config::AC_SCRATCH;
@@ -353,21 +354,23 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
             }
             SDL_SetRenderDrawColor(ren, 255, 0, 0, 255);
             SDL_RenderDrawLine(ren, startX, laneBg.y + 360, startX + laneBg.w, laneBg.y + 360);
-            renderer.drawText(ren, (side == 0 ? "1P (LEFT-S)" : "2P (RIGHT-S)"), startX + laneBg.w / 2, laneBg.y + laneBg.h + 25, {150, 150, 150, 255}, true, true);
+            renderer.drawTextCached(ren, (side == 0 ? "1P (LEFT-S)" : "2P (RIGHT-S)"), startX + laneBg.w / 2, laneBg.y + laneBg.h + 25, {150, 150, 150, 255}, true, true);
         }
-        renderer.drawText(ren, "CHECK LANE COVERAGE OVER BGA", 640, 680, {100, 100, 100, 255}, true, true);
+        renderer.drawTextCached(ren, "CHECK LANE COVERAGE OVER BGA", 640, 680, {100, 100, 100, 255}, true, true);
     }
     else {
-        renderer.drawText(ren, "PRESS BUTTON FOR:", 640, 300, { 255, 255, 0, 255 }, true, true);
+        renderer.drawTextCached(ren, "PRESS BUTTON FOR:", 640, 300, { 255, 255, 0, 255 }, true, true);
         if (currentTime - lastConfigTime < 1000) {
-            renderer.drawText(ren, "- PLEASE WAIT -", 640, 400, { 100, 100, 100, 255 }, true, true);
+            renderer.drawTextCached(ren, "- PLEASE WAIT -", 640, 400, { 100, 100, 100, 255 }, true, true);
         } else if (configStep < (int)keyLabels.size()) {
-            renderer.drawText(ren, keyLabels[configStep], 640, 400, { 255, 255, 255, 255 }, true, true);
+            renderer.drawTextCached(ren, keyLabels[configStep].c_str(), 640, 400, { 255, 255, 255, 255 }, true, true);
             int currentPos, totalPos;
             if (cursor == 1) { currentPos = configStep + 1;        totalPos = 11; } // 1P
             else if (cursor == 2) { currentPos = configStep - 22 + 1; totalPos = 10; } // 2P
             else { currentPos = configStep - 11 + 1;               totalPos = 10; } // SYS
-            renderer.drawText(ren, std::to_string(currentPos) + " / " + std::to_string(totalPos), 640, 460, { 150, 150, 150, 255 }, true, true);
+            char posBuf[16];
+            snprintf(posBuf, sizeof(posBuf), "%d / %d", currentPos, totalPos);
+            renderer.drawTextCached(ren, posBuf, 640, 460, { 150, 150, 150, 255 }, true, true);
         }
     }
 
@@ -400,7 +403,8 @@ void SceneOption::handleKeyConfig(int btn) {
         case 18: Config::SYS_BTN_DIFF   = btn; break;
         case 19: Config::SYS_BTN_SORT   = btn; break;
         case 20: Config::SYS_BTN_RANDOM = btn; break;
-        // 2P KEY CONFIG (cursor==2, step 22-32)
+        // step 21: 意図的な欠番。SYS KEY(11-20)と2P KEY(22-)の間のバッファ。
+        // 2P KEY CONFIG (cursor==2, step 22-31)
         case 22: Config::BTN_2P_EXIT    = btn; break;
         case 23: Config::BTN_2P_LANE1   = btn; break;
         case 24: Config::BTN_2P_LANE2   = btn; break;

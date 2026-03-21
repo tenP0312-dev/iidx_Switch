@@ -792,8 +792,8 @@ void NoteRenderer::renderFastSlow(SDL_Renderer* ren, bool isFast, bool isSlow, f
         snprintf(buf, sizeof(buf), "%s %+.1fms", isFast ? "FAST" : "SLOW", diffMs);
         drawText(ren, buf, x, y, color, false, true);
     } else {
-        // ON: 通常表示
-        drawText(ren, isFast ? "FAST" : "SLOW", x, y, color, false, true);
+        // ON: 固定文字列なのでキャッシュ版を使用（毎フレームテクスチャ生成を回避）
+        drawTextCached(ren, isFast ? "FAST" : "SLOW", x, y, color, false, true);
     }
 }
 

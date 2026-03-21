@@ -289,7 +289,6 @@ namespace Config {
     // 内部実装用（直接触らないこと）
     namespace detail {
         inline std::atomic<bool> isDirty{false};
-        inline std::atomic<bool> isSaving{false};
     }
 
     struct Snapshot {
@@ -546,22 +545,17 @@ namespace Config {
         file.close();
     }
 
-    inline void saveAsync() {
+    // 同期的にconfig.txtへ書き込む。ゲームループ外（シーン終了時等）でのみ呼ぶこと。
+    // Switch NANDへの書き込みは最大20ms程度かかるため、ループ内では呼ばない。
+    inline void saveSync() {
         if (!detail::isDirty.load(std::memory_order_relaxed)) return;
         detail::isDirty.store(false, std::memory_order_relaxed);
         writeSnapshot(ROOT_PATH + "config.txt", takeSnapshot());
     }
 
-    inline void flushSave() {
-        if (detail::isDirty.load(std::memory_order_relaxed)) {
-            writeSnapshot(ROOT_PATH + "config.txt", takeSnapshot());
-            detail::isDirty.store(false, std::memory_order_relaxed);
-        }
-    }
-
     inline void save() {
         markDirty();
-        saveAsync();
+        saveSync();
     }
 }
 #endif

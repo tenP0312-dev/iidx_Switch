@@ -52,10 +52,8 @@ struct TextCacheKey {
 
 struct TextCacheKeyHash {
     std::size_t operator()(const TextCacheKey& k) const {
-        // ★修正：fontPath をハッシュに含める。
-        // 以前は operator== で fontPath を比較しているのにハッシュが fontPath を無視していた。
-        // これはハッシュマップの契約違反（同一キーは同一ハッシュを返さなければならない）であり、
-        // 同フォント以外のエントリが同じバケツに入って衝突が増大していた。
+        // std::hash<std::string> はセッション内キャッシュ専用。
+        // 永続化・クロスプラットフォーム用途には使わない（プラットフォーム依存のため）。
         std::size_t h = std::hash<std::string>{}(k.text);
         h ^= std::hash<uint32_t>{}(k.color_rgba) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= std::hash<bool>{}(k.isBig)          + 0x9e3779b9 + (h << 6) + (h >> 2);

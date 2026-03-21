@@ -37,14 +37,13 @@ std::string ScoreManager::generateUniqueId(const std::string& title, const std::
     return title + "_" + diff + "_" + std::to_string(totalNotes);
 }
 
-// --- 【追加】Switch/OS互換性のためのファイル名ハッシュ化関数 ---
+// --- FNV-1a (32bit) ハッシュ — プラットフォーム非依存、コードベース全体で統一 ---
 std::string ScoreManager::convertToHash(const std::string& input) {
-    std::hash<std::string> hasher;
-    size_t hashValue = hasher(input);
-    std::stringstream ss;
-    // 16進数文字列に変換することで、ファイル名を常に英数字のみにする
-    ss << std::hex << std::setw(16) << std::setfill('0') << hashValue;
-    return ss.str();
+    uint32_t h = 2166136261u;
+    for (unsigned char c : input) { h ^= c; h *= 16777619u; }
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08x", h);
+    return std::string(buf);
 }
 
 std::string ScoreManager::getSavePath(const std::string& uniqueId) {
@@ -65,8 +64,9 @@ std::string ScoreManager::getSavePath(const std::string& uniqueId) {
 BestScore ScoreManager::loadScore(const std::string& title, const std::string& chartName, int totalNotes) {
     // --- 【継承】キャッシュチェックロジック ---
     std::string uniqueId = generateUniqueId(title, chartName, totalNotes);
-    if (scoreCache.count(uniqueId)) {
-        return scoreCache[uniqueId];
+    auto it = scoreCache.find(uniqueId);
+    if (it != scoreCache.end()) {
+        return it->second;
     }
     // ----------------------------------------
 
