@@ -151,7 +151,7 @@ public:
     void registerPath(int id, const std::string& filename) { idToFilename[id] = filename; }
     void loadBmp(int id, const std::string& fullPath, SDL_Renderer* renderer);
 
-    bool loadBgaFile(const std::string& path, SDL_Renderer* renderer);
+    bool loadBgaFile(const std::string& path, SDL_Renderer* renderer, double skipSec = 0.0);
 
     void preLoad(long long startPulse, SDL_Renderer* renderer);
     void setEvents(const std::vector<BgaEvent>& events)      { bgaEvents   = events; currentEventIndex = 0; }
@@ -160,6 +160,8 @@ public:
     void syncTime(double ms);
     void render(long long currentPulse, SDL_Renderer* renderer, int x, int y, double cur_ms = 0.0);
     void setMissTrigger(bool active) { showPoor = active; }
+    // BGA表示領域を黒でマスクする（待機中・BGA開始前に使用）
+    void setMask(bool enabled) { bgaMaskEnabled_ = enabled; }
     void clear();
     void cleanup();
 
@@ -188,13 +190,15 @@ private:
     size_t currentEventIndex = 0, currentLayerIndex = 0, currentPoorIndex = 0;
     int    lastDisplayedId   = -1, lastLayerId = -1, lastPoorId = -1;
     bool   showPoor          = false;
+    bool   bgaMaskEnabled_   = false;
 
     bool               isVideoMode = false;
     std::atomic<bool>  isReady{false};
     SDL_Texture*       videoTexture = nullptr;
     int                videoTexW    = 0;
     int                videoTexH    = 0;
-    double             videoFps     = 30.0;
+    double             videoFps        = 30.0;
+    double             videoStartSec_  = 0.0; // シーク開始位置（videoOffsetMs < 0 のとき正値）
 
     AVFormatContext* pFormatCtx     = nullptr;
     AVCodecContext*  pCodecCtx      = nullptr;

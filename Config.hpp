@@ -93,7 +93,7 @@ namespace Config {
     // GAUGE_NUM_ALIGNにより左端/中心/右端として解釈される
     inline int GAUGE_NUM_SHOW = 1;
     inline int GAUGE_NUM_X_1P = 324;   // 1P 数字表示 左端X (px)
-    inline int GAUGE_NUM_X_2P = 1024; // 2P 数字表示 右揃え基準X (px)  ← 2Pゲージ右端1250-7px
+    inline int GAUGE_NUM_X_2P = 1015; // 2P 数字表示 右揃え基準X (px)  ← 2Pゲージ右端1250-7px
     inline int GAUGE_NUM_Y_OFFSET = -20; // ゲージ上端からのYオフセット (px、負=ゲージより上)
     // GAUGE_NUM_ALIGN: 0=左揃え, 1=中央揃え, 2=右揃え
     inline int GAUGE_NUM_ALIGN = 2;
@@ -138,9 +138,9 @@ namespace Config {
     inline int TURNTABLE_X_2P        = 1221; // 2P: 中心X座標 (1280-59=1221, 2Pスクラッチ上)
     inline int TURNTABLE_Y_2P        = 530;  // 2P: 中心Y座標
     inline int TURNTABLE_SCALE_2P    = 100;  // 2P: 拡大率(%)
-    inline int TURNTABLE_SPEED_NORMAL = 1;   // 通常時 (1P/2P共通)
-    inline int TURNTABLE_SPEED_A      = 8;   // スクラッチA押下時
-    inline int TURNTABLE_SPEED_B      = -8;  // スクラッチB押下時
+    inline int TURNTABLE_SPEED_NORMAL = 8;   // 通常時 (1P/2P共通)
+    inline int TURNTABLE_SPEED_A      = 12;   // スクラッチA押下時
+    inline int TURNTABLE_SPEED_B      = -12;  // スクラッチB押下時
 
     // --- ハイスピード表示設定 (config.hpp のみ / config.txt には保存されない) ---
     // hs_number.png を使用。HIGH_SPEED*100 を整数表示 (例: ×2.50 → "250")
@@ -188,10 +188,20 @@ namespace Config {
     inline int BPM_MINMAX_SCALE_2P = 70;  // 2P: MIN/MAX表示サイズ(%)
     inline int BPM_CUR_X_2P        = 461; // 2P: 現在BPM 基準X (1280-819=461)
     inline int BPM_CUR_Y_2P        = 648; // 2P: 現在BPM Y
-    inline int BPM_MIN_X_2P        = 526; // 2P: MIN BPM 基準X (1280-754=526, CURの右)
+    inline int BPM_MIN_X_2P        = 395; // 2P: MIN BPM 基準X (1280-754=526, CURの右)
     inline int BPM_MIN_Y_2P        = 655; // 2P: MIN BPM Y
-    inline int BPM_MAX_X_2P        = 395; // 2P: MAX BPM 基準X (1280-885=395, CURの左)
+    inline int BPM_MAX_X_2P        = 526; // 2P: MAX BPM 基準X (1280-885=395, CURの左)
     inline int BPM_MAX_Y_2P        = 655; // 2P: MAX BPM Y
+
+    // --- 難易度バッジ設定 (config.hpp のみ / config.txt には保存されない) ---
+    // B.png=ビギナー, N.png=ノーマル, H.png=ハイパー, A.png=アナザー, L.png=その他
+    inline int DIFF_BADGE_SHOW    = 1;
+    inline int DIFF_BADGE_X_1P    = 433;  // 1P: 左上X座標
+    inline int DIFF_BADGE_Y_1P    = 25;   // 1P: 左上Y座標
+    inline int DIFF_BADGE_SCALE_1P = 100; // 1P: 拡大率(%)
+    inline int DIFF_BADGE_X_2P    = 722;  // 2P: 左上X座標 (1280-320-20≒940)
+    inline int DIFF_BADGE_Y_2P    = 25;   // 2P: 左上Y座標
+    inline int DIFF_BADGE_SCALE_2P = 100; // 2P: 拡大率(%)
 
     // --- 【追加】システム設定 ---
     inline int START_UP_OPTION = 1; // 0: Title, 1: Select (デフォルト選曲画面)

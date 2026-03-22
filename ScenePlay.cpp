@@ -160,6 +160,8 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 
     PlayEngine engine;
     engine.init(data);
+    // 段位認定: init() 後にゲージを引き継ぎ値で上書き
+    if (hasDanCtx_) engine.setInitialGauge(danCtx_.initialGauge);
     LOG_INFO("ScenePlay", "Phase3: engine.init done: totalNotes=%d", engine.getStatus().totalNotes);
     drawStartIndex = 0;
 
@@ -197,7 +199,27 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     bga.setBgaDirectory(bmsonDir);
 
     if (!data.header.bga_video.empty()) {
-        bga.loadBgaFile(bmsonDir + data.header.bga_video, ren);
+        // videoOffsetMs を先に計算して skipSec を loadBgaFile に渡す。
+        // videoOffsetMs < 0 のとき（BGAがbeat0より前に始まる）、
+        // シークなしだと sharedVideoElapsed が実時間より速く進みEOFが早まる。
+        double bga_videoOffsetMs = 0.0;
+        if (data.header.bga_offset != 0) {
+            double cb = data.header.bpm; int64_t cy = 0; double cm = 0.0;
+            std::vector<BPMEvent> sortedBpm = data.bpm_events;
+            std::sort(sortedBpm.begin(), sortedBpm.end(), [](const BPMEvent& a, const BPMEvent& b){ return a.y < b.y; });
+            for (const auto& bpmEv : sortedBpm) {
+                if (bpmEv.y >= data.header.bga_offset) break;
+                int64_t distY = bpmEv.y - cy;
+                cm += (double)distY * 60000.0 / (cb * data.header.resolution);
+                cy = bpmEv.y; cb = bpmEv.bpm;
+            }
+            if (cy < data.header.bga_offset)
+                cm += (double)(data.header.bga_offset - cy) * 60000.0 / (cb * data.header.resolution);
+            bga_videoOffsetMs = cm;
+        }
+        double skipSec = std::max(0.0, -bga_videoOffsetMs / 1000.0);
+        LOG_INFO("ScenePlay", "BGA videoOffsetMs=%.0f skipSec=%.2f", bga_videoOffsetMs, skipSec);
+        bga.loadBgaFile(bmsonDir + data.header.bga_video, ren, skipSec);
     }
     for (auto const& [id, filename] : data.bga_images) {
         bga.registerPath(id, filename);
@@ -267,6 +289,7 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
         }
     });
 
+    // videoOffsetMs は loadBgaFile 前に計算済み（bga_videoOffsetMs）と同値
     double videoOffsetMs = 0.0;
     if (data.header.bga_offset != 0) {
         double currentBpm = data.header.bpm;
@@ -294,7 +317,9 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     }
 
     // 音声ロード完了 → フェードインしてプレイ画面を表示
+    // BGA開始前は黒マスクで隠す（最初のフレームが待機画面に見えるのを防ぐ）
     {
+        bga.setMask(true);
         int64_t cur_y_wait = engine.getYFromMs(-2000.0);
         fadeIn(ren, renderer, engine, bga, -2000.0, cur_y_wait, currentHeader, SDL_GetTicks(), 500);
     }
@@ -376,6 +401,8 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
         double cur_ms = (double)((int64_t)now - (int64_t)start_ticks);
 
         bga.syncTime(std::max(0.0, cur_ms - videoOffsetMs));
+        // BGA開始時刻（videoOffsetMs）より前は黒マスクを表示
+        bga.setMask(cur_ms < videoOffsetMs);
 
         if (!processInput(cur_ms, now, engine)) {
             if (engine.getStatus().isFailed) playing = false;
@@ -464,7 +491,13 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
                 playing = false; break;           
             }
         }
-        if (cur_ms > s.maxTargetMs + 1500.0) playing = false;
+        // 全ノーツ（BGM含む）のトリガー時刻を過ぎたら無音待ち。
+        // 余韻のあるBGMサンプルが鳴り終わるまでループを継続する。
+        // Mix_Playing(-1)==0 になるか 30秒タイムアウトで終了。
+        if (cur_ms > s.maxTargetMs + 500.0) {
+            if (!snd.anyPlaying() || cur_ms > s.maxTargetMs + 30000.0)
+                playing = false;
+        }
         frameCount++;
         if (now - lastFpsTime >= 1000) { fps = frameCount; frameCount = 0; lastFpsTime = now; }
 #ifdef __SWITCH__
@@ -474,6 +507,8 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
 
     // ★修正①: ループ終了後に一度だけコピー（FC の場合はループ内でコピー済みなのでスキップ）
     if (!fcEffectTriggered) status = engine.getStatus();
+    // 段位認定: 最終ゲージを記録（runDan() の呼び出し元が getFinalGauge() で参照）
+    finalGauge_ = status.gauge;
 
     LOG_INFO("ScenePlay", "=== Play loop end: isAborted=%d score(PG=%d GR=%d PR=%d BD=%d) combo=%d ===",
              isAborted ? 1 : 0,
@@ -498,6 +533,24 @@ bool ScenePlay::run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string
     Config::save();
     if (isAborted) return false;
     return true;
+}
+
+// ============================================================
+//  runDan: 段位認定用ラッパー
+//  DanPlayContext でゲージ引き継ぎ・ゲージ種別を指定して run() を呼ぶ。
+// ============================================================
+bool ScenePlay::runDan(SDL_Renderer* ren, NoteRenderer& renderer,
+                       const std::string& bmsonPath, const DanPlayContext& ctx) {
+    danCtx_    = ctx;
+    hasDanCtx_ = true;
+    int savedGaugeOption = Config::GAUGE_OPTION;
+    Config::GAUGE_OPTION = ctx.gaugeOption;
+
+    bool result = run(ren, renderer, bmsonPath);
+
+    Config::GAUGE_OPTION = savedGaugeOption;
+    hasDanCtx_ = false;
+    return result;
 }
 
 // --- キーボード → 仮想ジョイスティックボタン変換 (Mac/PC用) ---
@@ -642,107 +695,79 @@ bool ScenePlay::processInput(double cur_ms, uint32_t now, PlayEngine& engine) {
     return true;
 }
 
+// スナップショットテクスチャを1枚作ってフェードする共通ヘルパー。
+// renderScene は呼び出し前に1回だけ実行済みであること。
+// fadeIn=true  : alpha 0→255（黒から scene へ）
+// fadeIn=false : alpha 255→0（scene から黒へ）
+static void fadeWithSnapshot(SDL_Renderer* ren, int durationMs, bool isFadeIn) {
+    int W = Config::SCREEN_WIDTH, H = Config::SCREEN_HEIGHT;
+
+    // ── 現在のバックバッファをCPUに読み出す ──────────────────────────
+    // SDL_TEXTUREACCESS_TARGET + SDL_LockTexture(videoTexture) はクラッシュするが、
+    // SDL_RenderReadPixels はレンダーターゲットを変えないため安全。
+    std::vector<uint8_t> pixels((size_t)W * H * 4);
+    bool readOk = (SDL_RenderReadPixels(ren, nullptr,
+                                        SDL_PIXELFORMAT_RGBA8888,
+                                        pixels.data(), W * 4) == 0);
+
+    SDL_Texture* snap = nullptr;
+    if (readOk) {
+        snap = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
+                                 SDL_TEXTUREACCESS_STREAMING, W, H);
+        if (snap) {
+            SDL_SetTextureBlendMode(snap, SDL_BLENDMODE_BLEND);
+            void* p; int pitch;
+            if (SDL_LockTexture(snap, nullptr, &p, &pitch) == 0) {
+                for (int row = 0; row < H; row++)
+                    memcpy((uint8_t*)p + row * pitch,
+                           pixels.data() + (size_t)row * W * 4, W * 4);
+                SDL_UnlockTexture(snap);
+            }
+        }
+    }
+
+    // ── フェードループ ────────────────────────────────────────────────
+    // 毎フレーム renderScene を呼ばず、スナップショットを AlphaMod で合成するだけ。
+    // BGAテクスチャ更新が起きないのでチラつきゼロ。
+    uint32_t start = SDL_GetTicks();
+    while (true) {
+        uint32_t frameStart = SDL_GetTicks();
+        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
+        // smoothstep: 端でゆっくり、中央で速く → 自然な印象
+        float ts = t * t * (3.0f - 2.0f * t);
+        Uint8 alpha = isFadeIn ? (Uint8)(ts * 255) : (Uint8)((1.0f - ts) * 255);
+
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        if (snap) {
+            SDL_SetTextureAlphaMod(snap, alpha);
+            SDL_RenderCopy(ren, snap, nullptr, nullptr);
+        }
+        SDL_RenderPresent(ren);
+        SDL_Event e; while (SDL_PollEvent(&e)) {}
+#ifdef __SWITCH__
+        if (!appletMainLoop()) break;
+#endif
+        if (t >= 1.0f) break;
+    }
+
+    if (snap) SDL_DestroyTexture(snap);
+}
+
 void ScenePlay::fadeIn(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
                        BgaManager& bga, double cur_ms, int64_t cur_y,
                        const BMSHeader& header, uint32_t baseNow, int durationMs) {
-    SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
-
-#ifdef __SWITCH__
-    // Switch: スナップショットテクスチャを使ったフェードイン（従来通り）
-    SDL_Texture* snap = SDL_CreateTexture(ren,
-        SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
-        Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT);
-    if (snap) {
-        SDL_SetRenderTarget(ren, snap);
-        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
-        SDL_SetRenderTarget(ren, nullptr);
-    } else {
-        LOG_WARN("ScenePlay", "fadeIn: SDL_CreateTexture(TARGET) failed: %s", SDL_GetError());
-    }
-    uint32_t start = SDL_GetTicks();
-    while (true) {
-        uint32_t frameStart = SDL_GetTicks();
-        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
-        if (snap) {
-            SDL_RenderCopy(ren, snap, nullptr, nullptr);
-        } else {
-            renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
-        }
-        Uint8 alpha = (Uint8)((1.0f - t) * 255);
-        if (alpha > 0) {
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, alpha);
-            SDL_RenderFillRect(ren, &screen);
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-        }
-        SDL_RenderPresent(ren);
-        SDL_Event e; while (SDL_PollEvent(&e)) {}
-        if (!appletMainLoop()) break;
-        if (t >= 1.0f) break;
-        uint32_t elapsed = SDL_GetTicks() - frameStart;
-        if (elapsed < 16) SDL_Delay(16 - elapsed);
-    }
-    if (snap) SDL_DestroyTexture(snap);
-#else
-    // macOS/PC: SDL_TEXTUREACCESS_TARGET はデコードスレッド実行中に
-    // Metal コンテキスト競合を起こすため使用しない。
-    // 毎フレーム renderScene を呼ぶシンプルなフェードイン。
-    uint32_t start = SDL_GetTicks();
-    while (true) {
-        uint32_t frameStart = SDL_GetTicks();
-        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
-        renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
-        Uint8 alpha = (Uint8)((1.0f - t) * 255);
-        if (alpha > 0) {
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, alpha);
-            SDL_RenderFillRect(ren, &screen);
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-        }
-        SDL_RenderPresent(ren);
-        SDL_Event e; while (SDL_PollEvent(&e)) {}
-        if (t >= 1.0f) break;
-        uint32_t elapsed = SDL_GetTicks() - frameStart;
-        if (elapsed < 16) SDL_Delay(16 - elapsed);
-    }
-#endif
+    // シーンを1回描画してスナップショットを取得し、黒→scene のフェードを行う。
+    renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 0.0);
+    fadeWithSnapshot(ren, durationMs, true);
 }
-
 
 void ScenePlay::fadeOut(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine,
                         BgaManager& bga, double cur_ms, int64_t cur_y,
                         const BMSHeader& header, uint32_t baseNow, int durationMs) {
-    SDL_Rect screen = { 0, 0, Config::SCREEN_WIDTH, Config::SCREEN_HEIGHT };
-    uint32_t start = SDL_GetTicks();
-    while (true) {
-        uint32_t frameStart = SDL_GetTicks();
-        float t = std::min(1.0f, (float)(frameStart - start) / (float)durationMs);
-
-        // フェード中も時間を進めてライブ描画（BGA・ノーツが動き続ける）
-        // cur_ms / cur_y は呼び出し時点の値を起点に、経過時間で更新する
-        double live_ms = cur_ms + (double)(frameStart - baseNow);
-        int64_t live_y  = engine.getYFromMs(live_ms);
-        bga.syncTime(live_ms);
-        renderScene(ren, renderer, engine, bga, live_ms, live_y, 0, header, frameStart, 1.0);
-
-        // 黒矩形を t の不透明度で重ねる（透明→黒へ遷移 = フェードアウト）
-        Uint8 alpha = (Uint8)(t * 255);
-        if (alpha > 0) {
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(ren, 0, 0, 0, alpha);
-            SDL_RenderFillRect(ren, &screen);
-            SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_NONE);
-        }
-        SDL_RenderPresent(ren);
-        SDL_Event e; while (SDL_PollEvent(&e)) {}
-#ifdef __SWITCH__
-        if (!appletMainLoop()) break;
-#endif
-        if (t >= 1.0f) break;
-        // VSync が効いていない場合でも約16ms/frame を下限として保証（CPU 100% 防止）
-        uint32_t elapsed = SDL_GetTicks() - frameStart;
-        if (elapsed < 16) SDL_Delay(16 - elapsed);
-    }
+    // シーンを1回描画してスナップショットを取得し、scene→黒 のフェードを行う。
+    renderScene(ren, renderer, engine, bga, cur_ms, cur_y, 0, header, baseNow, 1.0);
+    fadeWithSnapshot(ren, durationMs, false);
 }
 
 void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngine& engine, BgaManager& bga, double cur_ms, int64_t cur_y, int fps, const BMSHeader& header, uint32_t now, double progress) {
@@ -761,6 +786,7 @@ void ScenePlay::renderScene(SDL_Renderer* ren, NoteRenderer& renderer, PlayEngin
     if (!debugLayoutMode) {
         renderer.renderUI(ren, header, fps, currentBpm, engine.getStatus().exScore);
         renderer.renderBpm(ren, currentBpm, engine.getMinBpm(), engine.getMaxBpm(), engine.isBpmVaries());
+        renderer.renderDiffBadge(ren, header.chartName);
     }
     bga.render(cur_y, ren, bgaX, bgaY, cur_ms);
     int scratchSt = scratchUpActive ? 1 : (scratchDownActive ? 2 : 0);
@@ -1199,6 +1225,7 @@ void ScenePlay::renderPlayerField(SDL_Renderer* ren, NoteRenderer& renderer,
     double vsCurrentBpm = engine.getBpmFromMs(cur_ms);
     renderer.renderUI(ren, header, fps, vsCurrentBpm, engine.getStatus().exScore);
     renderer.renderBpm(ren, vsCurrentBpm, engine.getMinBpm(), engine.getMaxBpm(), engine.isBpmVaries());
+    renderer.renderDiffBadge(ren, header.chartName);
     renderer.updateTurntable(scratchStatus, now);
     renderer.renderTurntable(ren);
 
@@ -1333,11 +1360,16 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
         videoOffsetMs = cm;
     }
 
-    double max_target_ms = 0;
-    for (const auto& n : engine1P.getNotes())
+    double max_target_ms = 0;   // プログレスバー用（キーノーツのみ）
+    double bgm_end_ms = 0;      // ループ終了判定用（BGM含む全ノーツ）
+    for (const auto& n : engine1P.getNotes()) {
         if (!n.isBGM) max_target_ms = std::max(max_target_ms, n.target_ms);
-    for (const auto& n : engine2P.getNotes())
+        bgm_end_ms = std::max(bgm_end_ms, n.target_ms);
+    }
+    for (const auto& n : engine2P.getNotes()) {
         if (!n.isBGM) max_target_ms = std::max(max_target_ms, n.target_ms);
+        bgm_end_ms = std::max(bgm_end_ms, n.target_ms);
+    }
 
     SDL_JoystickID joy1ID = -1, joy2ID = -1;
     if (SDL_NumJoysticks() > 0) { SDL_Joystick* j = SDL_JoystickOpen(0); if (j) joy1ID = SDL_JoystickInstanceID(j); }
@@ -1375,6 +1407,7 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
         uint32_t now = SDL_GetTicks();
         double cur_ms = (double)((int64_t)now - (int64_t)start_ticks);
         bga.syncTime(std::max(0.0, cur_ms - videoOffsetMs));
+        bga.setMask(cur_ms < videoOffsetMs);
 
         if (!processInputVS(cur_ms, now, engine1P, engine2P, joy1ID, joy2ID)) {
             isAborted = true; playing = false; break;
@@ -1425,7 +1458,10 @@ bool ScenePlay::runVS(SDL_Renderer* ren, NoteRenderer& renderer,
                                 {255, 165, 0, 255}, true, true);
         SDL_RenderPresent(ren);
 
-        if (cur_ms > max_target_ms + 1500.0) playing = false;
+        if (cur_ms > bgm_end_ms + 500.0) {
+            if (!snd.anyPlaying() || cur_ms > bgm_end_ms + 30000.0)
+                playing = false;
+        }
         frameCount++;
         if (now - lastFpsTime >= 1000) { fps = frameCount; frameCount = 0; lastFpsTime = now; }
 #ifdef __SWITCH__

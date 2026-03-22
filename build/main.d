@@ -87,7 +87,8 @@ build/main.o: main.cpp /opt/homebrew/include/SDL2/SDL.h \
   /opt/homebrew/include/libavutil/pixdesc.h json.hpp SceneTitle.hpp \
   SceneSideSelect.hpp SceneModeSelect.hpp SceneSelect.hpp ScenePlay.hpp \
   SceneResult.hpp SceneOption.hpp SceneGameOver.hpp \
-  Scene2PDiffSelect.hpp SongManager.hpp Logger.hpp
+  Scene2PDiffSelect.hpp SceneDanSelect.hpp DanData.hpp SceneDan.hpp \
+  DanLoader.hpp SongManager.hpp Logger.hpp
 /opt/homebrew/include/SDL2/SDL.h:
 /opt/homebrew/include/SDL2/SDL_main.h:
 /opt/homebrew/include/SDL2/SDL_stdinc.h:
@@ -191,5 +192,9 @@ SceneResult.hpp:
 SceneOption.hpp:
 SceneGameOver.hpp:
 Scene2PDiffSelect.hpp:
+SceneDanSelect.hpp:
+DanData.hpp:
+SceneDan.hpp:
+DanLoader.hpp:
 SongManager.hpp:
 Logger.hpp:

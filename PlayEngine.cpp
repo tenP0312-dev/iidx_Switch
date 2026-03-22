@@ -982,6 +982,10 @@ void PlayEngine::processRelease(int lane, double cur_ms, uint32_t now) {
     }
 }
 
+void PlayEngine::setInitialGauge(double g) {
+    status.gauge = std::max(0.0, std::min(100.0, g));
+}
+
 double PlayEngine::getMsFromY(int64_t target_y) const { return projector.getMsFromY(target_y); }
 int64_t PlayEngine::getYFromMs(double cur_ms) const   { return projector.getYFromMs(cur_ms); }
 double PlayEngine::getBpmFromMs(double cur_ms) const  { return projector.getBpmFromMs(cur_ms); }

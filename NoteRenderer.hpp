@@ -119,6 +119,7 @@ public:
     void renderGauge(SDL_Renderer* ren, double gaugeValue,
                      int gaugeOption, bool isFailed);
     void renderGaugeUp(SDL_Renderer* ren, double gaugeValue, uint32_t now);
+    void renderDiffBadge(SDL_Renderer* ren, const std::string& chartName);
     void renderUI(SDL_Renderer* ren, const BMSHeader& header,
                   int fps, double bpm, int exScore);
     void renderDecisionInfo(SDL_Renderer* ren, const BMSHeader& header);
@@ -159,7 +160,8 @@ private:
     std::map<std::string, TextureRegion> textureCache;
     std::map<std::string, TTF_Font*>     customFontCache;
 
-    TextureRegion texBackground;
+    TextureRegion texBackground;    // 1P: Flame_BG.png
+    TextureRegion texBackground2P;  // 2P: Flame_BG_2P.png
     TextureRegion texNoteWhite, texNoteBlue, texNoteRed;
     TextureRegion texNoteWhite_LN, texNoteWhite_LN_Active1, texNoteWhite_LN_Active2;
     TextureRegion texNoteBlue_LN,  texNoteBlue_LN_Active1,  texNoteBlue_LN_Active2;
@@ -190,6 +192,7 @@ private:
     TextureRegion texScoreNumber;        // score_number.png       : 0〜9 (10等分) スコア表示用
     TextureRegion texTurntable;          // turn_center.png        : ターンテーブル
     TextureRegion texGaugeUp;            // gauge_up.png           : ゲージ上昇フラッシュ
+    TextureRegion texDiffB, texDiffN, texDiffH, texDiffA, texDiffL; // 難易度バッジ
 
     double   turntableAngle_  = 0.0;    // 現在角度 (度)
     uint32_t turntableLastMs_ = 0;      // 前フレームのタイムスタンプ

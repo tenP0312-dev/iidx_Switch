@@ -110,7 +110,8 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     // スキンロード結果を集計するラムダ（失敗時は loadAndCache 内で LOG_ERROR が出る）
     auto track = [&](TextureRegion& r) { if (r) skinOk++; else skinFail++; };
 
-    loadAndCache(ren, texBackground, s + "Flame_BG.png");       track(texBackground);
+    loadAndCache(ren, texBackground,   s + "Flame_BG.png");    track(texBackground);
+    loadAndCache(ren, texBackground2P, s + "Flame_BG_2P.png"); track(texBackground2P);
     loadAndCache(ren, texNoteWhite,  s + "note_white.png");      track(texNoteWhite);
     loadAndCache(ren, texNoteBlue,   s + "note_blue.png");       track(texNoteBlue);
     loadAndCache(ren, texNoteRed,    s + "note_red.png");        track(texNoteRed);
@@ -155,6 +156,11 @@ void NoteRenderer::init(SDL_Renderer* ren) {
     loadAndCache(ren, texScoreNumber,       s + "score_number.png");        track(texScoreNumber);
     loadAndCache(ren, texTurntable,         s + "turn_center.png");         track(texTurntable);
     loadAndCache(ren, texGaugeUp,           s + "gauge_up.png");            track(texGaugeUp);
+    loadAndCache(ren, texDiffB,             s + "B.png");                   track(texDiffB);
+    loadAndCache(ren, texDiffN,             s + "N.png");                   track(texDiffN);
+    loadAndCache(ren, texDiffH,             s + "H.png");                   track(texDiffH);
+    loadAndCache(ren, texDiffA,             s + "A.png");                   track(texDiffA);
+    loadAndCache(ren, texDiffL,             s + "L.png");                   track(texDiffL);
     loadAndCache(ren, texGaugeAssist, s + "gauge_assist.png"); track(texGaugeAssist);
     loadAndCache(ren, texGaugeNormal, s + "gauge_normal.png"); track(texGaugeNormal);
     loadAndCache(ren, texGaugeHard,   s + "gauge_hard.png");   track(texGaugeHard);
@@ -191,7 +197,7 @@ void NoteRenderer::cleanup() {
     if (fontSmall) TTF_CloseFont(fontSmall);
     if (fontBig)   TTF_CloseFont(fontBig);
 
-    texBackground.reset();
+    texBackground.reset(); texBackground2P.reset();
     texNoteWhite.reset(); texNoteBlue.reset(); texNoteRed.reset();
     texNoteWhite_LN.reset(); texNoteWhite_LN_Active1.reset(); texNoteWhite_LN_Active2.reset();
     texNoteBlue_LN.reset();  texNoteBlue_LN_Active1.reset();  texNoteBlue_LN_Active2.reset();
@@ -205,6 +211,7 @@ void NoteRenderer::cleanup() {
     texJudgeGreat.reset(); texJudgeGood.reset(); texJudgeBad.reset(); texJudgePoor.reset();
     texNumberAtlas.reset(); texLaneCover.reset();
     texGaugeNumber.reset(); texGaugeNumberDetail.reset(); texHsNumber.reset(); texScoreNumber.reset(); texTurntable.reset(); texGaugeUp.reset();
+    texDiffB.reset(); texDiffN.reset(); texDiffH.reset(); texDiffA.reset(); texDiffL.reset();
     texGaugeAssist.reset(); texGaugeNormal.reset(); texGaugeHard.reset();
     texGaugeExHard.reset(); texGaugeHazard.reset(); texGaugeDan.reset();
 
@@ -222,12 +229,12 @@ void NoteRenderer::cleanup() {
 }
 
 void NoteRenderer::renderBackground(SDL_Renderer* ren) {
-    if (texBackground) {
-        if (Config::PLAY_SIDE == 1) {
-            SDL_RenderCopy(ren, texBackground.texture, NULL, NULL);
-        } else {
-            SDL_RenderCopyEx(ren, texBackground.texture, NULL, NULL, 0, NULL, SDL_FLIP_HORIZONTAL);
-        }
+    if (Config::PLAY_SIDE == 2 && texBackground2P) {
+        // 2P: 専用背景画像をそのまま描画（左右反転しない）
+        SDL_RenderCopy(ren, texBackground2P.texture, NULL, NULL);
+    } else if (texBackground) {
+        // 1P: 通常背景
+        SDL_RenderCopy(ren, texBackground.texture, NULL, NULL);
     }
 }
 
@@ -1044,6 +1051,33 @@ void NoteRenderer::renderGaugeUp(SDL_Renderer* ren, double gaugeValue, uint32_t 
     int dh = std::max(1, texGaugeUp.h * scale / 100);
     SDL_Rect dst = { gx, gy, dw, dh };
     SDL_RenderCopy(ren, texGaugeUp.texture, nullptr, &dst);
+}
+
+void NoteRenderer::renderDiffBadge(SDL_Renderer* ren, const std::string& chartName) {
+    if (Config::DIFF_BADGE_SHOW == 0) return;
+
+    // chartName から難易度を判定（大文字化して比較）
+    std::string s = chartName;
+    for (auto& c : s) c = (char)toupper((unsigned char)c);
+
+    TextureRegion* tex = nullptr;
+    if      (s.find("BEGINNER") != std::string::npos) tex = &texDiffB;
+    else if (s.find("ANOTHER")  != std::string::npos) tex = &texDiffA; // HYPERより先に検査
+    else if (s.find("HYPER")    != std::string::npos) tex = &texDiffH;
+    else if (s.find("NORMAL")   != std::string::npos) tex = &texDiffN;
+    else                                               tex = &texDiffL;
+
+    if (!tex || !(*tex)) return;
+
+    const bool is2P = (Config::PLAY_SIDE == 2);
+    const int  scale = is2P ? Config::DIFF_BADGE_SCALE_2P : Config::DIFF_BADGE_SCALE_1P;
+    const int  bx    = is2P ? Config::DIFF_BADGE_X_2P    : Config::DIFF_BADGE_X_1P;
+    const int  by    = is2P ? Config::DIFF_BADGE_Y_2P    : Config::DIFF_BADGE_Y_1P;
+
+    int dw = std::max(1, tex->w * scale / 100);
+    int dh = std::max(1, tex->h * scale / 100);
+    SDL_Rect dst = { bx, by, dw, dh };
+    SDL_RenderCopy(ren, tex->texture, nullptr, &dst);
 }
 
 void NoteRenderer::renderLoading(SDL_Renderer* ren, int current, int total, const std::string& filename) {

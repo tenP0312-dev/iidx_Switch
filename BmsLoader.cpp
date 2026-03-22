@@ -977,6 +977,26 @@ static BMSData convertToData(const BmsRaw& raw,
     std::sort(bgaEvents.begin(),   bgaEvents.end(),   [](auto& a, auto& b){ return a.y < b.y; });
     std::sort(layerEvents.begin(), layerEvents.end(), [](auto& a, auto& b){ return a.y < b.y; });
     std::sort(poorEvents.begin(),  poorEvents.end(),  [](auto& a, auto& b){ return a.y < b.y; });
+
+    // BGA video offset: BmsonLoader と同様に、動画の最初の表示イベントの y 座標を
+    // bga_offset に設定する。ScenePlay がこれを元に videoOffsetMs を計算し、
+    // 動画が BGA イベント発火タイミングから再生されるようにする。
+    // #VIDEOFILE で指定された動画は beat0 から再生されるため対象外。
+    if (!h.bga_video.empty() && raw.videofile.empty()) {
+        int videoBmpId = -1;
+        for (auto& [id, filename] : raw.bmpTable) {
+            if (filename == h.bga_video) { videoBmpId = id; break; }
+        }
+        if (videoBmpId >= 0) {
+            for (const auto& ev : bgaEvents) {
+                if (ev.id == videoBmpId) {
+                    h.bga_offset = ev.y;
+                    break;
+                }
+            }
+        }
+    }
+
     data.bga_events   = std::move(bgaEvents);
     data.layer_events = std::move(layerEvents);
     data.poor_events  = std::move(poorEvents);

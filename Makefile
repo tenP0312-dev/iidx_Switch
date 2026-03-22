@@ -8,7 +8,7 @@ SOURCES     := main.cpp BmsonLoader.cpp SoundManager.cpp NoteRenderer.cpp \
                SceneTitle.cpp SceneDecision.cpp SceneSelectView.cpp SongManager.cpp \
                ChartProjector.cpp JudgeManager.cpp SceneOption.cpp SceneModeSelect.cpp \
                SceneSideSelect.cpp VirtualFolderManager.cpp BgaManager.cpp BmsLoader.cpp \
-               Scene2PDiffSelect.cpp
+               Scene2PDiffSelect.cpp SceneDanSelect.cpp SceneDan.cpp DanLoader.cpp
 
 # 並列ビルド数の設定
 JOBS        ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)

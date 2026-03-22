@@ -11,6 +11,9 @@
 #include "SceneOption.hpp" 
 #include "SceneGameOver.hpp" // 追加
 #include "Scene2PDiffSelect.hpp"
+#include "SceneDanSelect.hpp"
+#include "SceneDan.hpp"
+#include "DanLoader.hpp"
 #include "SongManager.hpp" // 追加：スキャン実行用
 #include "Logger.hpp"
 #include <fstream>
@@ -32,14 +35,16 @@ extern "C" {
 #endif
 
 enum class AppState {
-    TITLE,      
-    SIDESELECT, 
-    MODESELECT, 
-    SELECT,      
-    PLAYING,    
+    TITLE,
+    SIDESELECT,
+    MODESELECT,
+    SELECT,
+    PLAYING,
     OPTION,
     GAMEOVER,
-    ONEMORE_ENTRY // 追加：演出用ステート
+    ONEMORE_ENTRY,
+    DAN_SELECT,   // 段位認定コース選択
+    DAN_PLAY      // 段位認定フロー実行中
 };
 
 int main(int argc, char* argv[]) {
@@ -100,6 +105,9 @@ int main(int argc, char* argv[]) {
     SceneOption sceneOption; 
     SceneGameOver sceneGameOver; // 追加
     Scene2PDiffSelect scene2PDiffSelect; // ★2P VS
+    SceneDanSelect sceneDanSelect;
+    SceneDan       sceneDan;
+    DanData        danData = DanLoader::load(Config::ROOT_PATH);
 
     // ★ステージ管理用変数
     int globalCurrentStage = 1;
@@ -212,6 +220,7 @@ int main(int argc, char* argv[]) {
 
             case AppState::SIDESELECT: {
                 if (sceneSideSelect.update(ren, renderer) == SideSelectStep::FINISHED) {
+                    renderer.notifyLayoutChanged(); // PLAY_SIDE変更をレイアウトに反映
                     sceneModeSelect.init();
                     currentState = AppState::MODESELECT;
                 }
@@ -221,21 +230,27 @@ int main(int argc, char* argv[]) {
             case AppState::MODESELECT: {
                 ModeSelectStep mStep = sceneModeSelect.update(ren, renderer);
                 if (mStep == ModeSelectStep::GO_SELECT) {
-                    globalCurrentStage = 1; 
+                    globalCurrentStage = 1;
                     sceneSelect.init(forceScan, ren, renderer, globalCurrentStage);
                     currentState = AppState::SELECT;
-                    forceScan = false; 
+                    forceScan = false;
                 }
                 else if (mStep == ModeSelectStep::GO_OPTION) {
                     sceneOption.init();
                     currentState = AppState::OPTION;
+                }
+                else if (mStep == ModeSelectStep::GO_DAN) {
+                    danData = DanLoader::load(Config::ROOT_PATH); // 毎回リロードで最新を反映
+                    sceneDanSelect.init(danData);
+                    currentState = AppState::DAN_SELECT;
                 }
                 break;
             }
 
             case AppState::OPTION: { 
                 if (sceneOption.update(ren, renderer) == OptionState::FINISHED) {
-                    sceneModeSelect.init(); 
+                    renderer.notifyLayoutChanged(); // PLAY_SIDE変更をレイアウトに反映
+                    sceneModeSelect.init();
                     currentState = AppState::MODESELECT;
                 }
                 break;
@@ -396,7 +411,28 @@ int main(int argc, char* argv[]) {
                 }
                 break;
             }
-            
+
+            case AppState::DAN_SELECT: {
+                DanSelectStep dStep = sceneDanSelect.update(ren, renderer);
+                if (dStep == DanSelectStep::GO_DAN) {
+                    // GO_DAN: sceneDan.run() はブロッキング実行
+                    currentState = AppState::DAN_PLAY;
+                } else if (dStep == DanSelectStep::BACK) {
+                    sceneModeSelect.init();
+                    currentState = AppState::MODESELECT;
+                }
+                break;
+            }
+
+            case AppState::DAN_PLAY: {
+                // ブロッキング: run() の中でプレイ→リザルト→合否まで完結する
+                sceneDan.run(ren, renderer, sceneDanSelect.selectedCourse());
+                // 終了後はコース選択に戻る
+                sceneDanSelect.init(danData);
+                currentState = AppState::DAN_SELECT;
+                break;
+            }
+
             default:
                 break;
         }

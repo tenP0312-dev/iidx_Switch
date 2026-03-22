@@ -2,7 +2,7 @@
 #include "Config.hpp"
 
 void SceneModeSelect::init() {
-    selectedMode = 0; // 0: FREE PLAY, 1: STANDARD, 2: OPTION
+    selectedMode = 0; // 0: FREE PLAY, 1: STANDARD, 2: DAN, 3: OPTION
 }
 
 ModeSelectStep SceneModeSelect::update(SDL_Renderer* ren, NoteRenderer& renderer) {
@@ -15,28 +15,30 @@ ModeSelectStep SceneModeSelect::update(SDL_Renderer* ren, NoteRenderer& renderer
             if (btn == Config::SYS_BTN_DECIDE) {
                 if (selectedMode == 0) return ModeSelectStep::GO_SELECT; // FREE
                 if (selectedMode == 1) return ModeSelectStep::GO_SELECT; // STANDARD
-                if (selectedMode == 2) return ModeSelectStep::GO_OPTION; // OPTION
+                if (selectedMode == 2) return ModeSelectStep::GO_DAN;    // DAN
+                if (selectedMode == 3) return ModeSelectStep::GO_OPTION; // OPTION
             }
             if (btn == Config::SYS_BTN_DOWN) {
-                selectedMode = (selectedMode + 1) % 3;
+                selectedMode = (selectedMode + 1) % 4;
             }
             if (btn == Config::SYS_BTN_UP) {
-                selectedMode = (selectedMode + 2) % 3;
+                selectedMode = (selectedMode + 3) % 4;
             }
         }
-        
+
         if (e.type == SDL_KEYDOWN) {
             SDL_Keycode key = e.key.keysym.sym;
             if (key == SDLK_z || key == SDLK_RETURN) {
                 if (selectedMode == 0) return ModeSelectStep::GO_SELECT;
                 if (selectedMode == 1) return ModeSelectStep::GO_SELECT;
-                if (selectedMode == 2) return ModeSelectStep::GO_OPTION;
+                if (selectedMode == 2) return ModeSelectStep::GO_DAN;
+                if (selectedMode == 3) return ModeSelectStep::GO_OPTION;
             }
             if (key == SDLK_DOWN || key == SDLK_SPACE) {
-                selectedMode = (selectedMode + 1) % 3;
+                selectedMode = (selectedMode + 1) % 4;
             }
             if (key == SDLK_UP) {
-                selectedMode = (selectedMode + 2) % 3;
+                selectedMode = (selectedMode + 3) % 4;
             }
         }
     }
@@ -49,14 +51,15 @@ ModeSelectStep SceneModeSelect::update(SDL_Renderer* ren, NoteRenderer& renderer
     renderer.drawText(ren, "SELECT MODE", 640, 120, yellow, true, true);
     renderer.drawText(ren, "UP/DOWN TO MOVE / DECIDE TO SELECT", 640, 180, gray, true, true);
     
-    // UIデザインの維持：3項目を等間隔で表示
-    renderer.drawText(ren, "FREE PLAY", 640, 280, (selectedMode == 0 ? white : gray), true, true);
-    renderer.drawText(ren, "STANDARD", 640, 360, (selectedMode == 1 ? white : gray), true, true);
-    renderer.drawText(ren, "OPTION", 640, 440, (selectedMode == 2 ? white : gray), true, true);
+    // 4項目を等間隔で表示
+    renderer.drawText(ren, "FREE PLAY", 640, 240, (selectedMode == 0 ? white : gray), true, true);
+    renderer.drawText(ren, "STANDARD",  640, 310, (selectedMode == 1 ? white : gray), true, true);
+    renderer.drawText(ren, "DAN",       640, 380, (selectedMode == 2 ? white : gray), true, true);
+    renderer.drawText(ren, "OPTION",    640, 450, (selectedMode == 3 ? white : gray), true, true);
 
-    // カーソルの描画位置計算（選択された項目の座標に合わせる）
-    int lineY = 280 + (selectedMode * 80);
-    SDL_Rect cursor = { 640 - 100, lineY + 40, 200, 5 };
+    // カーソル
+    int lineY = 240 + (selectedMode * 70);
+    SDL_Rect cursor = { 640 - 100, lineY + 28, 200, 5 };
     SDL_SetRenderDrawColor(ren, cyan.r, cyan.g, cyan.b, 255);
     SDL_RenderFillRect(ren, &cursor);
 

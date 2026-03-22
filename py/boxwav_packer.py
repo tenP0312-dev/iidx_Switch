@@ -42,7 +42,7 @@ boxwav フォーマット
     [name:32][size:4][data] × extra_count
 """
 
-import os, sys, re, json, struct, threading, subprocess, tempfile, wave
+import os, sys, re, json, struct, threading, subprocess, tempfile, wave, shlex
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -812,11 +812,20 @@ def prompt_paths(label: str) -> list:
     print("─" * 60)
     paths: list = []
     while True:
-        line = input(f"  パス {len(paths)+1}: ").strip().strip('"').strip("'")
+        line = input(f"  パス {len(paths)+1}: ").strip()
         if not line:
             if not paths: print("  ⚠ 1件以上入力してください。"); continue
             break
-        paths.append(line)
+        # ターミナルからのドラッグ&ドロップで付くシェルエスケープを除去
+        # 例: /foo/bar\ baz → /foo/bar baz  ,  /foo/can\'t → /foo/can't
+        try:
+            parsed = shlex.split(line)
+        except ValueError:
+            parsed = [line]
+        for p in parsed:
+            p = p.strip()
+            if p:
+                paths.append(p)
     return paths
 
 def prompt_output_dir() -> str | None:

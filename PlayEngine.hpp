@@ -13,6 +13,8 @@
 class PlayEngine {
 public:
     void init(BMSData& data);
+    void setInitialGauge(double g); // 段位認定: init()後にゲージを上書きする
+    double getFinalGauge() const { return status.gauge; }
     void update(double cur_ms, uint32_t now);
     // isAuto: オートレーンからの打鍵。スコア・コンボ・ゲージを加算しない。
     // ただし ASSIST_OPTION==7（完全オート）の場合は呼び出し側が isAuto=false を渡す。

@@ -1,0 +1,453 @@
+{
+  "courses": [
+    {
+      "id": "ura_7kyu",
+      "name": "裏七級",
+      "visible": false,
+      "gaugeType": "EASY",
+      "startGauge": 100.0,
+      "songs": []
+    },
+    {
+      "id": "7kyu",
+      "name": "七級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "6kyu",
+      "name": "六級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "5kyu",
+      "name": "五級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "4kyu",
+      "name": "四級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "3kyu",
+      "name": "三級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "2kyu",
+      "name": "二級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "1kyu",
+      "name": "一級",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "1dan",
+      "name": "初段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "2dan",
+      "name": "二段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "3dan",
+      "name": "三段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "4dan",
+      "name": "四段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "5dan",
+      "name": "五段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "6dan",
+      "name": "六段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "7dan",
+      "name": "七段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "BMS/test/roop_dotm_wav/roop_dotm7SPA.bms"
+        },
+        {
+          "path": "BMS/test/22077_ZZ/22077_SPH.bmson"
+        },
+        {
+          "path": "BMS/test/tensenmen/sp_shape_4_spa.bme"
+        },
+        {
+          "path": "BMS/test/12004/12004_SPH.bmson"
+        }
+      ]
+    },
+    {
+      "id": "8dan",
+      "name": "八段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "9dan",
+      "name": "九段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "10dan",
+      "name": "十段",
+      "visible": true,
+      "gaugeType": "NORMAL",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "chuden",
+      "name": "中伝",
+      "visible": true,
+      "gaugeType": "HARD",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "kaiden",
+      "name": "皆伝",
+      "visible": true,
+      "gaugeType": "HARD",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "ura_kaiden",
+      "name": "裏皆伝",
+      "visible": true,
+      "gaugeType": "EX_HARD",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    },
+    {
+      "id": "kiwami_kaiden",
+      "name": "極皆伝",
+      "visible": true,
+      "gaugeType": "EX_HARD",
+      "startGauge": 100.0,
+      "songs": [
+        {
+          "path": "bms/example1.bms"
+        },
+        {
+          "path": "bms/example2.bms"
+        },
+        {
+          "path": "bms/example3.bms"
+        },
+        {
+          "path": "bms/example4.bms"
+        }
+      ]
+    }
+  ]
+}

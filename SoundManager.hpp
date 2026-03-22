@@ -40,6 +40,9 @@ public:
     uint64_t getCurrentMemory() const { return currentTotalMemory; }
     uint64_t getMaxMemory() const { return MAX_WAV_MEMORY; }
 
+    // 再生中のチャンネルが1つでも存在するか
+    bool anyPlaying() const { return Mix_Playing(-1) > 0; }
+
     // --- ヘルパー: 文字列からのID生成（一貫性維持用） ---
     // std::hash<std::string> はプラットフォーム・コンパイラ依存で値が変わるため使わない。
     // PlayEngine::init() の FNV-1a と同じアルゴリズムで統一する。

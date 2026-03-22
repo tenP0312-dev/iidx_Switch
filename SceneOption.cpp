@@ -68,42 +68,31 @@ void SceneOption::updateItemList() {
     items.emplace_back("[ GREEN NUMBER ]", getValStr(std::to_string(Config::GREEN_NUMBER), 5));
     // Index 6: LIFT
     items.emplace_back("[ LIFT ]", getValStr(std::to_string(Config::LIFT), 6));
-    // Index 7-8: LANE / SCRATCH WIDTH (AC固定 - 表示のみ)
-    items.emplace_back("[ KEY WHITE WIDTH ]", std::to_string(Config::AC_KEY_WHITE));
-    items.emplace_back("[ KEY BLACK WIDTH ]", std::to_string(Config::AC_KEY_BLACK));
-    // Index 9: GAUGE DISPLAY
-    items.emplace_back("[ GAUGE DISPLAY ]", getValStr((Config::GAUGE_DISPLAY_TYPE == 0 ? "1% STEP" : "2% STEP (IIDX)"), 9));
-    // Index 10: START UP SCREEN
-    items.emplace_back("[ START UP SCREEN ]", getValStr((Config::START_UP_OPTION == 0 ? "TITLE" : "SELECT"), 10));
-    // Index 11: JUDGE OFFSET
-    items.emplace_back("[ JUDGE OFFSET (ms) ]", getValStr(std::to_string(Config::JUDGE_OFFSET), 11));
-    // Index 12: VISUAL OFFSET
-    items.emplace_back("[ VISUAL OFFSET (px) ]", getValStr(std::to_string(Config::VISUAL_OFFSET), 12));
-    // Index 13: MORE NOTES COUNT
-    items.emplace_back("[ MORE NOTES COUNT ]", getValStr(std::to_string(Config::MORE_NOTES_COUNT), 13));
-
-    // ★追加 Index 14: LN TYPE
+    // Index 7: GAUGE DISPLAY
+    items.emplace_back("[ GAUGE DISPLAY ]", getValStr((Config::GAUGE_DISPLAY_TYPE == 0 ? "1% STEP" : "2% STEP (IIDX)"), 7));
+    // Index 8: START UP SCREEN
+    items.emplace_back("[ START UP SCREEN ]", getValStr((Config::START_UP_OPTION == 0 ? "TITLE" : "SELECT"), 8));
+    // Index 9: JUDGE OFFSET
+    items.emplace_back("[ JUDGE OFFSET (ms) ]", getValStr(std::to_string(Config::JUDGE_OFFSET), 9));
+    // Index 10: VISUAL OFFSET
+    items.emplace_back("[ VISUAL OFFSET (px) ]", getValStr(std::to_string(Config::VISUAL_OFFSET), 10));
+    // Index 11: MORE NOTES COUNT
+    items.emplace_back("[ MORE NOTES COUNT ]", getValStr(std::to_string(Config::MORE_NOTES_COUNT), 11));
+    // Index 12: LN TYPE
     static const char* lnTypeNames[] = {"CN", "HCN", "LN"};
-    items.emplace_back("[ LN TYPE ]", getValStr(lnTypeNames[Config::LN_OPTION], 14));
+    items.emplace_back("[ LN TYPE ]", getValStr(lnTypeNames[Config::LN_OPTION], 12));
 
-    // Index 15: Section  (以前の14から+1)
-    items.emplace_back("--- [ EFFECT SETTINGS ] ---", "");
-    // Index 16: BOMB DURATION  (以前の15から+1)
-    items.emplace_back("[ BOMB DURATION (ms) ]", getValStr(std::to_string(Config::BOMB_DURATION_MS), 16));
-    // Index 17: BOMB SIZE  (以前の16から+1)
-    items.emplace_back("[ BOMB SIZE (px) ]", getValStr(std::to_string(Config::BOMB_SIZE), 17));
-
-    // Index 18: Section  (以前の17から+1)
+    // Index 13: Section
     items.emplace_back("--- [ FOLDER SETTINGS ] ---", "");
-    // Index 19-24: 仮想フォルダ設定項目  (以前の18-23から+1)
-    items.emplace_back("[ FOLDER: LEVEL ]", getValStr((Config::SHOW_LEVEL_FOLDER ? "ON" : "OFF"), 19));
-    items.emplace_back("[ FOLDER: LAMP ]", getValStr((Config::SHOW_LAMP_FOLDER ? "ON" : "OFF"), 20));
-    items.emplace_back("[ FOLDER: RANK ]", getValStr((Config::SHOW_RANK_FOLDER ? "ON" : "OFF"), 21));
-    items.emplace_back("[ FOLDER: TYPE ]", getValStr((Config::SHOW_CHART_TYPE_FOLDER ? "ON" : "OFF"), 22));
-    items.emplace_back("[ FOLDER: NOTES ]", getValStr((Config::SHOW_NOTES_RANGE_FOLDER ? "ON" : "OFF"), 23));
-    items.emplace_back("[ FOLDER: ALPHA ]", getValStr((Config::SHOW_ALPHA_FOLDER ? "ON" : "OFF"), 24));
-    
-    // Index 25: BACK  (以前の24から+1)
+    // Index 14-19: 仮想フォルダ設定項目
+    items.emplace_back("[ FOLDER: LEVEL ]", getValStr((Config::SHOW_LEVEL_FOLDER ? "ON" : "OFF"), 14));
+    items.emplace_back("[ FOLDER: LAMP ]", getValStr((Config::SHOW_LAMP_FOLDER ? "ON" : "OFF"), 15));
+    items.emplace_back("[ FOLDER: RANK ]", getValStr((Config::SHOW_RANK_FOLDER ? "ON" : "OFF"), 16));
+    items.emplace_back("[ FOLDER: TYPE ]", getValStr((Config::SHOW_CHART_TYPE_FOLDER ? "ON" : "OFF"), 17));
+    items.emplace_back("[ FOLDER: NOTES ]", getValStr((Config::SHOW_NOTES_RANGE_FOLDER ? "ON" : "OFF"), 18));
+    items.emplace_back("[ FOLDER: ALPHA ]", getValStr((Config::SHOW_ALPHA_FOLDER ? "ON" : "OFF"), 19));
+
+    // Index 20: BACK
     items.emplace_back("[ BACK TO MENU ]", "");
 }
 
@@ -153,8 +142,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     if (cursor == 1) { state = OptionState::WAITING_KEY; configStep = 0;  lastConfigTime = currentTime; }  // 1P KEY
                     else if (cursor == 2) { state = OptionState::WAITING_KEY; configStep = 22; lastConfigTime = currentTime; } // 2P KEY
                     else if (cursor == 3) { state = OptionState::WAITING_KEY; configStep = 11; lastConfigTime = currentTime; } // SYS KEY
-                    // ★変更: 調整可能範囲に14(LN TYPE)を追加、以降+1
-                    else if ((cursor >= 5 && cursor <= 17) || (cursor >= 19 && cursor <= 24)) { state = OptionState::ADJUSTING_VALUE; updateItemList(); }
+                    else if ((cursor >= 5 && cursor <= 12) || (cursor >= 14 && cursor <= 19)) { state = OptionState::ADJUSTING_VALUE; updateItemList(); }
                     else if (cursor == (int)items.size() - 1) { Config::save(); renderer.notifyLayoutChanged(); return OptionState::FINISHED; }
                 }
                 if (btn == Config::SYS_BTN_BACK) { Config::save(); renderer.notifyLayoutChanged(); return OptionState::FINISHED; }
@@ -182,17 +170,17 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else changed = false;
                     if (targetVar < 0) targetVar = 0;
                 }
-                else if (cursor == 9) { // GAUGE DISPLAY
+                else if (cursor == 7) { // GAUGE DISPLAY
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN) Config::GAUGE_DISPLAY_TYPE = 1 - Config::GAUGE_DISPLAY_TYPE;
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
                 }
-                else if (cursor == 10) { // START UP SCREEN
+                else if (cursor == 8) { // START UP SCREEN
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN) Config::START_UP_OPTION = 1 - Config::START_UP_OPTION;
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;
                 }
-                else if (cursor == 11) { // JUDGE OFFSET
+                else if (cursor == 9) { // JUDGE OFFSET
                     int& targetVar = Config::JUDGE_OFFSET;
                     if (btn == Config::SYS_BTN_UP) targetVar += 5;
                     else if (btn == Config::SYS_BTN_DOWN) targetVar -= 5;
@@ -202,7 +190,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else changed = false;
                     targetVar = std::clamp(targetVar, -200, 200);
                 }
-                else if (cursor == 12) { // VISUAL OFFSET
+                else if (cursor == 10) { // VISUAL OFFSET
                     int& targetVar = Config::VISUAL_OFFSET;
                     if (btn == Config::SYS_BTN_UP) targetVar += 5;
                     else if (btn == Config::SYS_BTN_DOWN) targetVar -= 5;
@@ -212,7 +200,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else changed = false;
                     targetVar = std::clamp(targetVar, -200, 200);
                 }
-                else if (cursor == 13) { // MORE NOTES COUNT
+                else if (cursor == 11) { // MORE NOTES COUNT
                     int& targetVar = Config::MORE_NOTES_COUNT;
                     if (btn == Config::SYS_BTN_UP) targetVar += 10;
                     else if (btn == Config::SYS_BTN_DOWN) targetVar -= 10;
@@ -220,8 +208,7 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                     else changed = false;
                     if (targetVar < 0) targetVar = 0;
                 }
-                // ★追加: cursor == 14: LN TYPE
-                else if (cursor == 14) { // LN TYPE: CN=0 / HCN=1 / LN=2
+                else if (cursor == 12) { // LN TYPE: CN=0 / HCN=1 / LN=2
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_UP)
                         Config::LN_OPTION = (Config::LN_OPTION + 2) % 3;
                     else if (btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_DOWN)
@@ -230,36 +217,14 @@ OptionState SceneOption::update(SDL_Renderer* ren, NoteRenderer& renderer) {
                         state = OptionState::SELECTING_ITEM;
                     else changed = false;
                 }
-                else if (cursor == 16) { // BOMB DURATION  (以前の15から+1)
-                    int& targetVar = Config::BOMB_DURATION_MS;
-                    if (btn == Config::SYS_BTN_UP) targetVar += 50;
-                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 50;
-                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 10;
-                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 10;
-                    else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
-                    else changed = false;
-                    if (targetVar < 50) targetVar = 50;
-                    if (targetVar > 1000) targetVar = 1000;
-                }
-                else if (cursor == 17) { // BOMB SIZE (px)
-                    int& targetVar = Config::BOMB_SIZE;
-                    if (btn == Config::SYS_BTN_UP) targetVar += 10;
-                    else if (btn == Config::SYS_BTN_DOWN) targetVar -= 10;
-                    else if (btn == Config::SYS_BTN_LEFT) targetVar -= 1;
-                    else if (btn == Config::SYS_BTN_RIGHT) targetVar += 1;
-                    else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
-                    else changed = false;
-                    if (targetVar < 10) targetVar = 10;
-                    if (targetVar > 500) targetVar = 500;
-                }
-                else if (cursor >= 19 && cursor <= 24) { // FOLDERS  (以前の18-23から+1)
+                else if (cursor >= 14 && cursor <= 19) { // FOLDERS
                     if (btn == Config::SYS_BTN_LEFT || btn == Config::SYS_BTN_RIGHT || btn == Config::SYS_BTN_UP || btn == Config::SYS_BTN_DOWN) {
-                        if (cursor == 19) Config::SHOW_LEVEL_FOLDER = !Config::SHOW_LEVEL_FOLDER;
-                        else if (cursor == 20) Config::SHOW_LAMP_FOLDER = !Config::SHOW_LAMP_FOLDER;
-                        else if (cursor == 21) Config::SHOW_RANK_FOLDER = !Config::SHOW_RANK_FOLDER;
-                        else if (cursor == 22) Config::SHOW_CHART_TYPE_FOLDER = !Config::SHOW_CHART_TYPE_FOLDER;
-                        else if (cursor == 23) Config::SHOW_NOTES_RANGE_FOLDER = !Config::SHOW_NOTES_RANGE_FOLDER;
-                        else if (cursor == 24) Config::SHOW_ALPHA_FOLDER = !Config::SHOW_ALPHA_FOLDER;
+                        if (cursor == 14) Config::SHOW_LEVEL_FOLDER = !Config::SHOW_LEVEL_FOLDER;
+                        else if (cursor == 15) Config::SHOW_LAMP_FOLDER = !Config::SHOW_LAMP_FOLDER;
+                        else if (cursor == 16) Config::SHOW_RANK_FOLDER = !Config::SHOW_RANK_FOLDER;
+                        else if (cursor == 17) Config::SHOW_CHART_TYPE_FOLDER = !Config::SHOW_CHART_TYPE_FOLDER;
+                        else if (cursor == 18) Config::SHOW_NOTES_RANGE_FOLDER = !Config::SHOW_NOTES_RANGE_FOLDER;
+                        else if (cursor == 19) Config::SHOW_ALPHA_FOLDER = !Config::SHOW_ALPHA_FOLDER;
                     }
                     else if (btn == Config::SYS_BTN_DECIDE || btn == Config::SYS_BTN_BACK) state = OptionState::SELECTING_ITEM;
                     else changed = false;

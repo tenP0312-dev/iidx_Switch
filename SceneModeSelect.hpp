@@ -7,7 +7,8 @@
 enum class ModeSelectStep {
     SELECTING,
     GO_SELECT,
-    GO_OPTION
+    GO_OPTION,
+    GO_DAN
 };
 
 class SceneModeSelect {

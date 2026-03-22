@@ -209,7 +209,7 @@ void BgaManager::preLoad(long long startPulse, SDL_Renderer* renderer) {
 //  loadBgaFile
 // ============================================================
 
-bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
+bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer, double skipSec) {
     LOG_INFO("BgaManager", "loadBgaFile: '%s'", path.c_str());
     std::string targetPath = path;
     if (targetPath.compare(0, 5, "sdmc:") == 0) targetPath.erase(0, 5);
@@ -358,8 +358,9 @@ bool BgaManager::loadBgaFile(const std::string& path, SDL_Renderer* renderer) {
     isVideoMode = true;
     isReady.store(false, std::memory_order_release);
 
-    LOG_INFO("BgaManager", "loadBgaFile: starting decode thread slotBytes=%zuKB x%d arena=%zuKB",
-             slotBytes / 1024, NUM_SLOTS, FFmpegAllocator::usedBytes() / 1024);
+    videoStartSec_ = skipSec;
+    LOG_INFO("BgaManager", "loadBgaFile: starting decode thread slotBytes=%zuKB x%d arena=%zuKB skipSec=%.1f",
+             slotBytes / 1024, NUM_SLOTS, FFmpegAllocator::usedBytes() / 1024, skipSec);
     decodeThread = std::thread(&BgaManager::videoWorker, this);
     return true;
 }
@@ -384,6 +385,22 @@ void BgaManager::videoWorker() {
     AVPacket* packet = av_packet_alloc();
     if (!packet) return;
 
+    // videoOffsetMs < 0 のとき（BGA が beat0 より前に始まる曲）、
+    // デコードスレッドを正しい位置からスタートさせる。
+    // シークしないと sharedVideoElapsed が実時間より速く進み、
+    // 動画の中盤でEOFに到達して画面がフリーズする。
+    if (videoStartSec_ > 0.001) {
+        int64_t seekTs = (int64_t)(videoStartSec_ * AV_TIME_BASE);
+        int seekRet = av_seek_frame(pFormatCtx, -1, seekTs, AVSEEK_FLAG_BACKWARD);
+        if (seekRet < 0) {
+            LOG_WARN("BgaManager", "videoWorker: seek to %.2fs failed (err=%d), starting from 0", videoStartSec_, seekRet);
+        } else {
+            avcodec_flush_buffers(pCodecCtx);
+            LOG_INFO("BgaManager", "videoWorker: seeked to %.2fs OK", videoStartSec_);
+        }
+    }
+
+    bool eofLogged = false;
     while (!quitThread.load(std::memory_order_relaxed)) {
 
         int tail     = qTail.load(std::memory_order_relaxed);
@@ -394,6 +411,11 @@ void BgaManager::videoWorker() {
         }
 
         if (av_read_frame(pFormatCtx, packet) < 0) {
+            if (!eofLogged) {
+                LOG_INFO("BgaManager", "videoWorker: EOF reached, sharedVideoElapsed=%.2fs",
+                         sharedVideoElapsed.load(std::memory_order_acquire));
+                eofLogged = true;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
@@ -524,6 +546,15 @@ void BgaManager::render(long long currentPulse, SDL_Renderer* renderer, int x, i
            && poorEvents[currentPoorIndex].y <= currentPulse)
         lastPoorId = poorEvents[currentPoorIndex++].id;
 
+    // BGA開始前・待機中は黒マスクを描画して映像を隠す
+    if (bgaMaskEnabled_) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderFillRect(renderer, &dst);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        return;
+    }
+
     if (isVideoMode && videoTexture) {
         double currentTime = sharedVideoElapsed.load(std::memory_order_acquire);
 
@@ -625,6 +656,8 @@ void BgaManager::clear() {
     isReady.store(false, std::memory_order_release);
     quitThread.store(false, std::memory_order_relaxed);
     videoFps = 30.0;
+    bgaMaskEnabled_  = false;
+    videoStartSec_   = 0.0;
 
     currentEventIndex = 0; currentLayerIndex = 0; currentPoorIndex = 0;
     lastDisplayedId   = -1; lastLayerId = -1; lastPoorId = -1;

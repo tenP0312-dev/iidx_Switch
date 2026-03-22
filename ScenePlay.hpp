@@ -13,6 +13,16 @@ class PlayEngine;
 class BgaManager;
 
 // ============================================================
+//  段位認定: 1曲分のプレイ引数
+// ============================================================
+struct DanPlayContext {
+    double initialGauge = 100.0; // 引き継ぎゲージ (0〜100)
+    int    gaugeOption  = 0;     // Config::GAUGE_OPTION に一時設定する値
+    int    songIndex    = 0;     // 0-based (表示用)
+    int    totalSongs   = 1;     // 課程の全曲数 (表示用)
+};
+
+// ============================================================
 //  ★2P VS: 1プレイヤー分の状態
 // ============================================================
 struct PlayerState {
@@ -61,6 +71,11 @@ class ScenePlay {
 public:
     // 1P用（既存互換）
     bool run(SDL_Renderer* ren, NoteRenderer& renderer, const std::string& bmsonPath);
+
+    // 段位認定用: DanPlayContext でゲージ引き継ぎ・ゲージ種別を指定
+    bool runDan(SDL_Renderer* ren, NoteRenderer& renderer,
+                const std::string& bmsonPath, const DanPlayContext& ctx);
+    double getFinalGauge() const { return finalGauge_; }
 
     // ★2P VS用
     bool runVS(SDL_Renderer* ren, NoteRenderer& renderer,
@@ -151,6 +166,11 @@ private:
     // ★デバッグ: true の間は BG・ノーツ以外を非表示（位置合わせ用）
     // 確認完了後は false に変更するか、このフラグごと削除する
     bool debugLayoutMode = false;
+
+    // 段位認定用: runDan() が run() を呼ぶ前にセットし、run() 内で参照する
+    bool         hasDanCtx_ = false;
+    DanPlayContext danCtx_  = {};
+    double       finalGauge_ = 100.0;
 };
 
 
